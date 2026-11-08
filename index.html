@@ -100,7 +100,7 @@
   .check-head { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; margin-top:14px; }
   .check-head b { font-weight:600; }
   .okc { color:var(--ok); font-size:13px; } .badc { color:var(--err); font-size:13px; font-weight:500; }
-  input.expin { width:80px; padding:4px 8px; font-size:13px; }
+  table.list input.expin { width:80px; padding:4px 8px; font-size:13px; }
   tr.skip td { white-space:normal; color:var(--warn); font-size:12px; background:color-mix(in srgb, var(--warn) 7%, transparent); }
   .mrow .rowctl { display:flex; gap:8px; align-items:center; }
   .mrow input[type=date] { grid-column:auto; width:auto; padding:5px 8px; font-size:12px; }
@@ -871,7 +871,7 @@ function renderCheck(per) {
     return `<tr><td><b>${esc(k)}</b></td><td class="small">${esc([...st.files].join(', ') || '—')}</td><td class="num">${v}</td>
       <td><input type="number" min="0" class="expin" data-sec="${esc(k)}" value="${e ?? ''}" placeholder="—"></td><td>${res}</td></tr>${sk}`;
   }).join('');
-  secCheck.innerHTML = `<div class="check-head"><b>Section check</b><span class="small">Type the treasurer's number of students for each section to compare.</span>${bad ? `<span class="badc">${bad} section${bad === 1 ? '' : 's'} don't match</span>` : ''}</div>
+  secCheck.innerHTML = `<div class="check-head"><b>Section check</b><span class="small">Type the treasurer's number of students for each section to compare.</span>${bad ? `<span class="badc">${bad} section${bad === 1 ? " doesn't" : "s don't"} match</span>` : ''}</div>
     <div class="table-wrap" style="max-height:none"><table class="list"><thead><tr><th>Section</th><th>File</th><th>Read</th><th>Expected</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 secCheck.addEventListener('input', e => {
