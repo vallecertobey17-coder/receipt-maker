@@ -107,6 +107,10 @@
   tr.skip td { white-space:normal; color:var(--warn); font-size:12px; background:color-mix(in srgb, var(--warn) 7%, transparent); }
   .mrow .rowctl { display:flex; gap:8px; align-items:center; }
   .mrow input[type=date] { grid-column:auto; width:auto; padding:5px 8px; font-size:12px; }
+  .orbar-in { display:grid; grid-template-columns:1.3fr 1fr 1fr 1fr; gap:12px; align-items:end; }
+  .orbar-in label.f { margin-bottom:0; }
+  #s1First { color:var(--text); font-weight:600; }
+  @media (max-width: 700px) { .orbar-in { grid-template-columns:1fr 1fr; } }
   .add-row { display:grid; grid-template-columns:2fr 1fr auto; gap:8px; margin-top:12px; }
   @media (max-width: 700px) { .add-row { grid-template-columns:1fr; } }
   .x { border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:14px; padding:2px 6px; border-radius:6px; }
@@ -274,6 +278,16 @@
         <div><b>Word or PDF:</b> needs a <b>COURSE, YEAR, &amp; SECTION:</b> box and a table with a <b>NAME</b> column. Signature columns and blank rows are skipped. From Google Docs, use File → Download → .docx or .pdf.</div>
         <div><b>Excel:</b> make the column titles <b>bold</b> (e.g. <b>Name</b>, <b>Course, Year &amp; Section</b>). Rows above the titles are ignored.<br><button class="link" id="sampleBtn" type="button">Try it with sample names</button></div>
       </div>
+    </div>
+
+    <div class="card orbar">
+      <div class="orbar-in">
+        <div><h3 style="margin:0">OR No.</h3><p class="small" style="margin:2px 0 0">First receipt: <b id="s1First"></b></p></div>
+        <label class="f"><span>Year</span><input type="text" id="s1Year" inputmode="numeric"></label>
+        <label class="f"><span>Semester</span><select id="s1Sem"><option value="1">1st</option><option value="2">2nd</option><option value="S">Summer</option></select></label>
+        <label class="f"><span>Start at no.</span><input type="text" id="s1Start" inputmode="numeric"></label>
+      </div>
+      <p class="small" style="margin:6px 0 0" id="s1Range"></p>
     </div>
 
     <div class="card result" id="resultCard">
@@ -1436,7 +1450,21 @@ exportList.addEventListener('click', () => {
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Receipts');
   XLSX.writeFile(wb, `receipts-${rnYear.value.trim()}-${rnSem.value.trim()}.xlsx`);
 });
-function updateRnExample() { const n = state.rows.length; rnExample.textContent = n > 1 ? `${receiptNo(0)} to ${receiptNo(n - 1)}` : n === 1 ? receiptNo(0) : `${receiptNo(0)}, ${receiptNo(1)}, …`; }
+function syncOrBar() {
+  if (document.activeElement !== s1Year) s1Year.value = rnYear.value;
+  s1Sem.value = rnSem.value;
+  if (document.activeElement !== s1Start) s1Start.value = rnStart.value;
+  const n = state.rows.length;
+  s1First.textContent = receiptNo(0);
+  s1Range.textContent = n ? `These ${n} receipts will be ${receiptNo(0)} to ${receiptNo(n - 1)}.` : 'Change "Start at no." to continue from a paper receipt book or to start over at 1.';
+}
+[[s1Year, rnYear], [s1Sem, rnSem], [s1Start, rnStart]].forEach(([a, b]) => a.addEventListener('input', () => {
+  if (a === s1Start || a === s1Year) a.value = a.value.replace(/\D/g, '');
+  if (a === s1Start && a.value === '') return;      // let the box be empty while typing
+  b.value = a.value; b.dispatchEvent(new Event('input'));
+}));
+s1Start.addEventListener('blur', () => { if (!s1Start.value) s1Start.value = rnStart.value; });
+function updateRnExample() { syncOrBar(); const n = state.rows.length; rnExample.textContent = n > 1 ? `${receiptNo(0)} to ${receiptNo(n - 1)}` : n === 1 ? receiptNo(0) : `${receiptNo(0)}, ${receiptNo(1)}, …`; }
 [rnYear, rnSem, rnStart, rnDigits].forEach(el => el.addEventListener('input', () => {
   updateRnExample(); renderEditor(); renderPreview(); persist();
   if (state.step === 3) generate();
