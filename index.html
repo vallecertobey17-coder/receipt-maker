@@ -94,6 +94,8 @@
   table.list th { position:sticky; top:0; background:var(--surface2); color:var(--muted); font-weight:500; font-size:12px; z-index:1; }
   table.list tr:hover td { background:var(--hover); }
   table.list td.num, table.list td.or { color:var(--muted); font-variant-numeric:tabular-nums; }
+  table.list input[type=date] { width:auto; padding:4px 8px; font-size:12px; border-radius:7px; }
+  table.list input.own { border-color:var(--accent); }
   .x { border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:14px; padding:2px 6px; border-radius:6px; }
   .x:hover { color:var(--err); background:color-mix(in srgb, var(--err) 12%, transparent); }
 
@@ -259,7 +261,7 @@
       <div id="dataStatus" class="status">No list yet</div>
       <div class="sec-chips" id="secChips"></div>
       <div class="table-wrap" id="dataPreview"></div>
-      <p class="small" style="margin:8px 0 0">Students get OR numbers in this order. Click ✕ to remove a student who hasn't paid.</p>
+      <p class="small" style="margin:8px 0 0">Students get OR numbers in this order. Change <b>Date received</b> for anyone who paid on a different day (highlighted dates differ from the default in step 2). Click ✕ to remove a student who hasn't paid.</p>
     </div>
   </section>
 
@@ -291,8 +293,9 @@
         <h3>Payment</h3>
         <div class="row2">
           <label class="f"><span>Amount</span><div class="money"><input type="number" id="qAmount" min="0" step="0.01"></div></label>
-          <label class="f"><span>Date</span><input type="text" id="qDate" placeholder="MM/DD/YYYY"></label>
+          <label class="f"><span>Date received (default)</span><input type="date" id="qDate"></label>
         </div>
+        <p class="small" id="qDateNote" style="margin:-6px 0 12px"></p>
         <label class="f"><span>Payment for</span><input type="text" id="qFor"></label>
         <label class="f"><span>Mode of payment</span>
           <div class="seg"><label><input type="radio" name="qMode" value="Cash">Cash</label><label><input type="radio" name="qMode" value="GCash">GCash</label></div>
@@ -418,7 +421,7 @@ let nextId = 1;
 // Built-in I-CONNECT official receipt: where each line is, in mm from the top-left corner.
 const SLOTS = [
   { slot:'or',      label:'OR NO.',            src:'auto',  x:74.6, y:4.9, w:9.6, size:5.5,  bold:true, align:'center', sample:'' },
-  { slot:'date',    label:'DATE',              match:/date|petsa/i, notMatch:/ref/i, fixed:() => todayStr(), x:74.6, y:7.5, w:9.6, size:5.5, align:'center', sample:'' },
+  { slot:'date',    label:'DATE',              match:/date|petsa/i, notMatch:/ref/i, fixed:() => todayStr(), x:74.6, y:7.7, w:9.6, size:4.5, align:'center', sample:'' },
   { slot:'from',    label:'RECEIVED FROM',     match:/name|pangalan|received from/i, x:24.2, y:20.0, w:60.1, size:8.5, bold:true, sample:'Dela Cruz, Juan P.' },
   { slot:'yrsec',   label:'COURSE, YEAR & SECTION', match:/year|section|course|program|block|\byr\b/i, notMatch:/date|school year/i, x:33.2, y:24.7, w:51.3, size:8.5, sample:'BSIT 1-2' },
   { slot:'words',   label:'AMOUNT IN WORDS',   fixed:'35', format:'words',  x:27.4, y:30.3, w:57.2, size:7, sample:'150' },
@@ -430,6 +433,9 @@ const SLOTS = [
 ];
 const MONEY_RE = /amount|fee|halaga|bayad|price|php|₱|paid$|^paid/i;
 const isMoneyTitle = h => MONEY_RE.test(h) && !/date|mode|method|for\b|ref|no\.?$|number|#/i.test(h);
+function isoToStr(iso) { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ''); return m ? `${m[2]}/${m[3]}/${m[1]}` : (iso || ''); }
+function strToIso(str) { const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(str || '').trim()); return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : ''; }
+function defaultDate() { const f = state.fields.find(f => f.slot === 'date'); return f && f.src === 'fixed' ? f.fixed : ''; }
 function todayStr() { const d = new Date(); return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`; }
 const slotDef = f => SLOTS.find(s => s.slot === f.slot);
 
@@ -478,13 +484,17 @@ function syncFieldsToHeaders() {
 function layoutObj() {
   return { fields: state.fields, rnYear: rnYear.value, rnSem: rnSem.value, rnStart: rnStart.value, rnDigits: rnDigits.value,
            amtPrefix: amtPrefix.value, amtDecimals: amtDecimals.checked,
-           fontFamily: fontFamily.value, fontColor: fontColor.value, orient: orient.value, scale: qScale.value, tplVer: 2,
+           fontFamily: fontFamily.value, fontColor: fontColor.value, orient: orient.value, scale: qScale.value, tplVer: 3,
            offX: offX.value, offY: offY.value, gap: gap.value, showBg: showBg.checked, cutLines: cutLines.checked };
 }
 function applyLayout(o) {
   if (!o) return;
   if (Array.isArray(o.fields)) {
     state.fields = o.fields.map(f => Object.assign(newField({}), f, { id: 'f' + (nextId++) }));
+    for (const f of state.fields) if (f.slot === 'date' && f.src === 'fixed') { f.fixed = todayStr(); f.userSet = false; }
+    if ((o.tplVer || 1) < 3) for (const f of state.fields) {   // smaller DATE
+      const d = f.slot === 'date' && slotDef(f); if (d) Object.assign(f, { x:d.x, y:d.y, w:d.w, size:d.size });
+    }
     if ((o.tplVer || 1) < 2) for (const f of state.fields) {   // OR No. / DATE now sit inside their boxes
       const d = f.slot && slotDef(f);
       if (d && (d.slot === 'or' || d.slot === 'date')) Object.assign(f, { x:d.x, y:d.y, w:d.w, size:d.size });
@@ -775,10 +785,22 @@ function renderPreview() {
   secChips.innerHTML = [...per].map(([k, v]) => `<i>${esc(k)} · ${v}</i>`).join('');
   const orOn = state.fields.some(f => f.src === 'auto' && f.enabled);
   dataPreview.style.display = n ? '' : 'none';
-  dataPreview.innerHTML = !n ? '' : `<table class="list"><thead><tr><th>#</th>${orOn ? '<th>OR No.</th>' : ''}${h.map(x => `<th>${esc(x)}</th>`).join('')}<th></th></tr></thead><tbody>` +
-    state.rows.map((r, i) => `<tr><td class="num">${i + 1}</td>${orOn ? `<td class="or">${esc(receiptNo(i))}</td>` : ''}${h.map(x => `<td>${esc(r[x])}</td>`).join('')}<td><button class="x" data-rm="${i}" title="Remove">✕</button></td></tr>`).join('') +
+  const dateF = state.fields.find(f => f.slot === 'date' && f.enabled);
+  const dateCell = (r, i) => { if (!dateF) return ''; const own = !!r.__date;
+    const v = strToIso(own ? r.__date : valueFor(dateF, r, i));
+    return `<td><input type="date" class="rowdate${own ? ' own' : ''}" data-i="${i}" value="${v}" title="${own ? 'Own date for this student' : 'Uses the default date from step 2'}"></td>`; };
+  dataPreview.innerHTML = !n ? '' : `<table class="list"><thead><tr><th>#</th>${orOn ? '<th>OR No.</th>' : ''}${h.map(x => `<th>${esc(x)}</th>`).join('')}${dateF ? '<th>Date received</th>' : ''}<th></th></tr></thead><tbody>` +
+    state.rows.map((r, i) => `<tr><td class="num">${i + 1}</td>${orOn ? `<td class="or">${esc(receiptNo(i))}</td>` : ''}${h.map(x => `<td>${esc(r[x])}</td>`).join('')}${dateCell(r, i)}<td><button class="x" data-rm="${i}" title="Remove">✕</button></td></tr>`).join('') +
     '</tbody></table>';
 }
+dataPreview.addEventListener('change', e => {
+  const el = e.target; if (!el.classList || !el.classList.contains('rowdate')) return;
+  const r = state.rows[+el.dataset.i]; if (!r) return;
+  const v = isoToStr(el.value), def = defaultDate();
+  if (!el.value || (def && v === def)) delete r.__date; else r.__date = v;
+  el.classList.toggle('own', !!r.__date);
+  renderQuick(); renderEditor(); if (state.step === 3) generate();
+});
 dataPreview.addEventListener('click', e => {
   const b = e.target.closest('[data-rm]'); if (!b) return;
   state.rows.splice(+b.dataset.rm, 1);
@@ -806,6 +828,7 @@ function numToWords(n) {
   return s + ' Only';
 }
 function valueFor(f, row, idx = 0) {
+  if (f.slot === 'date' && row && row.__date) return row.__date;
   if (f.src === 'auto') return receiptNo(idx);
   let v = f.src === 'fixed' ? f.fixed : (row ? (row[f.col] ?? '') : '');
   if (f.format === 'money') return fmtMoney(v);
@@ -1004,16 +1027,23 @@ function renderQuick() {
   const val = k => { const f = slotField(k); return !f ? '' : f.src === 'fixed' ? f.fixed : ''; };
   const ph = k => { const f = slotField(k); return f && f.src === 'col' ? `from the list (${f.col})` : ''; };
   qAmount.value = val('figures'); qAmount.placeholder = ph('figures');
-  qDate.value = val('date'); if (ph('date')) qDate.placeholder = ph('date');
+  qDate.value = strToIso(val('date'));
+  const own = state.rows.filter(r => r.__date).length;
+  qDateNote.innerHTML = own ? `${own} student${own === 1 ? ' has' : 's have'} their own date (set in step 1). <button class="link" id="qDateAll" type="button">Use this date for everyone</button>`
+    : 'Used on every receipt. To give a student a different date, change it in their row in step 1.';
   qFor.value = val('for'); qFor.placeholder = ph('for');
   const mode = /g-?cash/i.test(val('cash')) ? 'GCash' : 'Cash';
   document.querySelectorAll('input[name=qMode]').forEach(r => r.checked = r.value === mode);
   qRefWrap.style.display = mode === 'GCash' ? '' : 'none';
   qRef.value = val('ref');
 }
-function quickChanged() { renderFieldTable(); renderEditor(); persist(); }
+function quickChanged() { renderFieldTable(); renderEditor(); persist(); if (state.step === 3) generate(); }
 qAmount.addEventListener('input', () => { setFixed('figures', qAmount.value); setFixed('words', qAmount.value); quickChanged(); });
-qDate.addEventListener('input', () => { setFixed('date', qDate.value); quickChanged(); });
+qDate.addEventListener('change', () => { if (!qDate.value) return; setFixed('date', isoToStr(qDate.value)); renderPreview(); renderQuick(); quickChanged(); });
+qDateNote.addEventListener('click', e => {
+  if (e.target.id !== 'qDateAll') return;
+  state.rows.forEach(r => delete r.__date); renderPreview(); renderQuick(); renderEditor();
+});
 qFor.addEventListener('input', () => { setFixed('for', qFor.value); quickChanged(); });
 qRef.addEventListener('input', () => { setFixed('ref', qRef.value); quickChanged(); });
 document.querySelectorAll('input[name=qMode]').forEach(r => r.addEventListener('change', () => {
@@ -1105,7 +1135,13 @@ markUsed.addEventListener('click', () => {
 exportList.addEventListener('click', () => {
   // Only on request: a file for the treasurer's records. Nothing is kept by this page.
   const auto = state.fields.find(f => f.src === 'auto' && f.enabled);
-  const data = state.rows.map((r, i) => auto ? Object.assign({ 'Receipt No. (generated)': receiptNo(i) }, r) : Object.assign({}, r));
+  const dateF = state.fields.find(f => f.slot === 'date' && f.enabled);
+  const data = state.rows.map((r, i) => {
+    const o = auto ? { 'OR No.': receiptNo(i) } : {};
+    for (const h of state.headers) o[h] = r[h];
+    if (dateF) o['Date received'] = valueFor(dateF, r, i);
+    return o;
+  });
   const ws = XLSX.utils.json_to_sheet(data);
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Receipts');
   XLSX.writeFile(wb, `receipts-${rnYear.value.trim()}-${rnSem.value.trim()}.xlsx`);
