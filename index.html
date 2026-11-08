@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bulk Receipt Maker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  :root { --accent:#1f5fbf; --line:#d6d9e0; --bg:#f4f5f8; --text:#1d2330; --muted:#667085; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  header { background:#fff; border-bottom:1px solid var(--line); padding:14px 24px; }
+  header h1 { margin:0; font-size:20px; }
+  header p { margin:4px 0 0; color:var(--muted); font-size:13px; }
+  main { max-width:1200px; margin:0 auto; padding:20px 24px 60px; display:grid; gap:18px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:16px 18px; }
+  .card h2 { margin:0 0 4px; font-size:16px; }
+  .card .hint { color:var(--muted); font-size:13px; margin:0 0 12px; }
+  .step { display:inline-block; background:var(--accent); color:#fff; border-radius:50%; width:22px; height:22px; text-align:center; line-height:22px; font-size:12px; margin-right:6px; }
+  .row { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+  label { font-size:13px; }
+  input[type=text], input[type=number], select { padding:6px 8px; border:1px solid var(--line); border-radius:6px; font-size:13px; }
+  input[type=number] { width:72px; }
+  button { padding:8px 14px; border-radius:6px; border:1px solid var(--line); background:#fff; cursor:pointer; font-size:13px; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .status { font-size:13px; color:var(--muted); }
+  .status.ok { color:#127a3a; }
+  .status.err { color:#b42318; }
+  .editor-wrap { display:grid; grid-template-columns: auto 1fr; gap:18px; align-items:start; }
+  @media (max-width: 1000px) { .editor-wrap { grid-template-columns: 1fr; } }
+  #canvas { position:relative; background:#fff center/100% 100% no-repeat; border:1px solid #999; box-shadow:0 2px 10px rgba(0,0,0,.08); overflow:hidden; user-select:none; }
+  #canvas.empty { background-image: repeating-linear-gradient(45deg,#fafafa 0 10px,#f0f0f0 10px 20px); }
+  .fbox { position:absolute; border:1px dashed var(--accent); background:rgba(31,95,191,.08); cursor:move; white-space:nowrap; overflow:hidden; line-height:1; display:flex; align-items:center; }
+  .fbox.sel { border-style:solid; background:rgba(31,95,191,.16); }
+  .fbox .tag { position:absolute; top:-1px; left:-1px; font:10px system-ui; background:var(--accent); color:#fff; padding:1px 4px; pointer-events:none; opacity:.85; }
+  .fbox .rs { position:absolute; right:0; top:0; bottom:0; width:7px; cursor:ew-resize; background:rgba(31,95,191,.35); }
+  table.fields { border-collapse:collapse; width:100%; font-size:13px; }
+  table.fields th, table.fields td { border-bottom:1px solid var(--line); padding:6px 4px; text-align:left; }
+  table.fields th { color:var(--muted); font-weight:500; font-size:12px; }
+  table.fields tr.sel td { background:#eef4ff; }
+  table.fields select { max-width:150px; }
+  .preview-table { max-height:220px; overflow:auto; border:1px solid var(--line); border-radius:6px; }
+  .preview-table table { border-collapse:collapse; font-size:12px; width:100%; }
+  .preview-table th, .preview-table td { padding:4px 8px; border-bottom:1px solid #eee; text-align:left; white-space:nowrap; }
+  .preview-table th { position:sticky; top:0; background:#f9fafb; }
+  #sheets { display:flex; flex-direction:column; gap:20px; align-items:center; }
+  .sheet-holder { transform-origin: top center; }
+  .sheet { background:#fff; position:relative; box-shadow:0 2px 12px rgba(0,0,0,.15); overflow:hidden; }
+  .rc { position:absolute; background:center/100% 100% no-repeat; overflow:hidden; }
+  .rc.cut { outline:0.2mm dashed #888; outline-offset:-0.1mm; }
+  .rf { position:absolute; white-space:nowrap; overflow:hidden; line-height:1; display:flex; align-items:center; }
+  .sheet-label { font-size:12px; color:var(--muted); margin-bottom:4px; text-align:center; }
+  header p.privacy { color:#127a3a; }
+  header p.privacy button { padding:3px 8px; font-size:12px; margin-left:6px; }
+  .gen-box { margin-top:14px; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:#f9fafb; font-size:13px; }
+  .small { font-size:12px; color:var(--muted); }
+
+  @media print {
+    body { background:#fff; }
+    header, .card:not(#printCard), #printCard > :not(#sheets), .sheet-label { display:none !important; }
+    main { padding:0; margin:0; max-width:none; display:block; }
+    #printCard { border:0; padding:0; margin:0; }
+    #sheets { display:block; gap:0; }
+    .sheet-holder { transform:none !important; height:auto !important; width:auto !important; margin:0 !important; }
+    #sheets { margin:0 !important; }
+    #sheets > div { break-after:page; page-break-after:always; }
+    #sheets > div:last-child { break-after:auto; page-break-after:auto; }
+    .sheet { box-shadow:none; }
+    html, body { margin:0; padding:0; }
+    * { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  }
+</style>
+<style id="pageStyle"></style>
+</head>
+<body>
+<header>
+  <h1>Bulk Receipt Maker</h1>
+  <p>Receipt size 9 × 6.38 cm · up to 9 receipts per A4 sheet (landscape, 3 × 3)</p>
+  <p class="privacy">🔒 Generator only: the student list is read inside this browser tab and is <b>never saved or uploaded</b>. Closing or refreshing the page erases it. Only the field positions and template picture are remembered. <button id="clearAll" type="button">Clear everything</button></p>
+</header>
+<main>
+
+  <section class="card">
+    <h2><span class="step">1</span>Upload the receipt template</h2>
+    <p class="hint">A picture (PNG/JPG) or PDF of the blank receipt. It will be stretched to exactly 9 × 6.38 cm. Skip this if you print on pre-printed receipt paper.</p>
+    <div class="row">
+      <input type="file" id="tplFile" accept="image/*,application/pdf">
+      <span id="tplStatus" class="status">No template yet</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2><span class="step">2</span>Upload the student list</h2>
+    <p class="hint">Excel (.xlsx) with one row per student. Make the <b>column titles bold</b> (e.g. <b>Name</b>, <b>Student No.</b>, <b>Receipt No.</b>, <b>Org Fee</b>). The bold row is read as the titles, and every column under it becomes a field you can place on the receipt. Rows above the titles (like the organization name) are ignored. From Google Sheets: File → Download → Microsoft Excel (.xlsx). CSV and .xls files work too, but they don't keep bold formatting, so their first row is used as the titles.</p>
+    <div class="row">
+      <input type="file" id="dataFile" accept=".xlsx,.xls,.csv,.tsv,.ods">
+      <label>Sheet: <select id="sheetPick" disabled></select></label>
+      <button id="sampleBtn">Use sample data</button>
+      <span id="dataStatus" class="status">No list yet</span>
+    </div>
+    <div id="dataPreview" class="preview-table" style="margin-top:12px; display:none"></div>
+  </section>
+
+  <section class="card">
+    <h2><span class="step">3</span>Place the fields on the template</h2>
+    <p class="hint">Each column title is a field. Drag each box to where its text belongs, and drag its right edge to set the width. Text that is too long shrinks to fit. Untick columns you don't need on the receipt. Use <b>+ Add field</b> to put the same column twice (e.g. amount in numbers and in words), or to add text that's the same on every receipt (e.g. the date).</p>
+    <div class="editor-wrap">
+      <div>
+        <div id="canvas" class="empty"></div>
+        <div class="small" style="margin-top:6px">Selected box: arrow keys nudge 0.5 mm (Shift = 2 mm).</div>
+      </div>
+      <div>
+        <table class="fields" id="fieldTable">
+          <thead><tr><th>Show</th><th>Field (column title)</th><th>Print as</th><th>Size (pt)</th><th>Bold</th><th>Align</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="row" style="margin-top:8px">
+          <button id="addField">+ Add field</button>
+        </div>
+        <div class="gen-box">
+          <b>Generated receipt number</b> <span class="small">(field "Receipt No. (generated)" in the list above)</span>
+          <div class="row" style="margin-top:8px">
+            <label>Year: <input type="text" id="rnYear" style="width:64px"></label>
+            <label>Semester: <input type="text" id="rnSem" value="1" list="semList" style="width:56px"></label>
+            <datalist id="semList"><option value="1"><option value="2"><option value="S"></datalist>
+            <label>Start at no.: <input type="number" id="rnStart" value="1" min="1" style="width:80px"></label>
+            <label>Digits: <input type="number" id="rnDigits" value="4" min="1" max="8" style="width:50px"></label>
+          </div>
+          <div class="row" style="margin-top:6px">
+            <span class="small">Example: <b id="rnExample"></b></span>
+          </div>
+          <p class="small" style="margin:6px 0 0">Format: YEAR-SEMESTER-RUNNING NUMBER. Students get numbers in the order they appear in the sheet. After printing, click <b>"Printed: continue numbering next time"</b> in step 4 so the next batch picks up where this one ended. Only this counter is remembered, never names.</p>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <label>Money prefix: <input type="text" id="amtPrefix" value="₱" style="width:50px"></label>
+          <label><input type="checkbox" id="amtDecimals" checked> 2 decimals (1,500.00)</label>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <label>Font:
+            <select id="fontFamily">
+              <option value="Arial, Helvetica, sans-serif">Arial</option>
+              <option value="'Times New Roman', Times, serif">Times New Roman</option>
+              <option value="Calibri, 'Segoe UI', sans-serif">Calibri</option>
+              <option value="'Courier New', monospace">Courier New</option>
+            </select>
+          </label>
+          <label>Color: <input type="color" id="fontColor" value="#000000"></label>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button id="saveLayout">Save layout as file</button>
+          <label class="small">Load layout: <input type="file" id="loadLayout" accept=".json"></label>
+        </div>
+        <p class="small">The layout (positions, sizes and column titles only, never student data) is also remembered by this browser, so the same spreadsheet format lines up automatically next time.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="printCard">
+    <h2><span class="step">4</span>Generate and print</h2>
+    <p class="hint">Print at <b>100% / Actual size</b> (not "Fit to page"), with margins set to <b>None</b>, on A4 paper.</p>
+    <div class="row">
+      <label>Orientation:
+        <select id="orient">
+          <option value="landscape">Landscape: 9 per sheet (3 × 3)</option>
+          <option value="portrait">Portrait: 8 per sheet (2 × 4)</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="showBg" checked> Print template background</label>
+      <label><input type="checkbox" id="cutLines" checked> Cut lines</label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label>Printer shift right (mm): <input type="number" id="offX" value="0" step="0.5"></label>
+      <label>Printer shift down (mm): <input type="number" id="offY" value="0" step="0.5"></label>
+      <label>Gap between receipts (mm): <input type="number" id="gap" value="0" step="0.5" min="0"></label>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="genBtn">Generate receipts</button>
+      <button class="primary" id="printBtn" disabled>Print / Save as PDF</button>
+      <span id="genStatus" class="status"></span>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="markUsed" disabled>Printed: continue numbering next time</button>
+      <button id="exportList" disabled>Download list with receipt numbers (.xlsx)</button>
+      <span id="usedStatus" class="status"></span>
+    </div>
+    <div id="sheets" style="margin-top:18px"></div>
+  </section>
+
+</main>
+
+<script>
+const RW = 90, RH = 63.8;            // receipt size in mm
+const PX_PER_MM = 7;                 // editor scale
+const PT_TO_MM = 0.352778;
+const MONEY_RE = /amount|fee|payment|total|halaga|bayad|price|php|₱|^paid$/i;
+const isMoneyTitle = h => MONEY_RE.test(h) && !/date|petsa|no\.?$|number|#/i.test(h);
+
+let state = {
+  tplData: null,          // data URL of template image (not student data)
+  headers: [], rows: [],  // student data: memory only, never stored
+  book: null,             // { kind:'exceljs'|'sheetjs', wb }
+  fields: [],             // [{id,src:'col'|'fixed',col,fixed,enabled,x,y,w,size,bold,align,format}]
+  selected: null,
+};
+let nextId = 1;
+
+/* ---------- fields ---------- */
+function slotPos(i) {           // stacked default positions
+  const perCol = 7, col = Math.floor(i / perCol) % 2, r = i % perCol;
+  return { x: 6 + col * 44, y: 6 + r * 8, w: col ? 40 : 42 };
+}
+function newField(props) {
+  const p = slotPos(state.fields.length);
+  return Object.assign({ id: 'f' + (nextId++), src:'col', col:'', fixed:'', enabled:true,
+    x:p.x, y:p.y, w:p.w, size:9, bold:false, align:'left', format:'text' }, props);
+}
+function fieldLabel(f) { return f.src === 'auto' ? 'Receipt No. (generated)' : f.src === 'fixed' ? 'Same text for all' : (f.col || '(no column)'); }
+const RCPT_RE = /(receipt|rcpt|^or\b|o\.r\.).*(no|num|#)|^or$|^o\.?r\.?$/i;
+function rnPad(n) { return String(n).padStart(Math.max(1, parseInt(rnDigits.value) || 4), '0'); }
+function receiptNo(idx) { return `${rnYear.value.trim()}-${rnSem.value.trim()}-${rnPad((parseInt(rnStart.value) || 1) + idx)}`; }
+function ensureAutoField() {
+  if (state.fields.some(f => f.src === 'auto')) return;
+  state.fields.unshift(newField({ src:'auto', x:56, y:6, w:30, size:9, bold:true, align:'right' }));
+  // a receipt-number column from the sheet would print on top of it, so hide that column by default
+  state.fields.forEach(f => { if (f.src === 'col' && RCPT_RE.test(f.col)) f.enabled = false; });
+}
+// Build the field list from the column titles, reusing remembered positions for titles seen before.
+function syncFieldsToHeaders() {
+  const old = state.fields, used = new Set(), out = [];
+  state.fields = out;
+  for (const h of state.headers) {
+    const prev = old.find(f => f.src === 'col' && f.col === h && !f.extra && !used.has(f.id));
+    if (prev) { used.add(prev.id); out.push(prev); }
+    else out.push(newField({ col:h, format: isMoneyTitle(h) ? 'money' : 'text', enabled: true }));
+  }
+  // keep extra fields (added with "+ Add field") whose column still exists, plus fixed-text fields
+  for (const f of old) if (f.extra && (f.src === 'fixed' || state.headers.includes(f.col))) out.push(f);
+  const auto = old.find(f => f.src === 'auto');
+  if (auto) out.unshift(auto); else ensureAutoField();
+}
+
+/* ---------- layout persistence (no student data) ---------- */
+function layoutObj() {
+  return { fields: state.fields, rnYear: rnYear.value, rnSem: rnSem.value, rnStart: rnStart.value, rnDigits: rnDigits.value,
+           amtPrefix: amtPrefix.value, amtDecimals: amtDecimals.checked,
+           fontFamily: fontFamily.value, fontColor: fontColor.value, orient: orient.value,
+           offX: offX.value, offY: offY.value, gap: gap.value, showBg: showBg.checked, cutLines: cutLines.checked };
+}
+function applyLayout(o) {
+  if (!o) return;
+  if (Array.isArray(o.fields)) {
+    state.fields = o.fields.map(f => Object.assign(newField({}), f, { id: 'f' + (nextId++) }));
+    if (state.headers.length) syncFieldsToHeaders();
+  }
+  const set = (el, v) => { if (v !== undefined) { if (el.type === 'checkbox') el.checked = v; else el.value = v; } };
+  set(amtPrefix, o.amtPrefix); set(amtDecimals, o.amtDecimals); set(fontFamily, o.fontFamily); set(fontColor, o.fontColor);
+  set(rnYear, o.rnYear); set(rnSem, o.rnSem); set(rnStart, o.rnStart); set(rnDigits, o.rnDigits);
+  set(orient, o.orient); set(offX, o.offX); set(offY, o.offY); set(gap, o.gap); set(showBg, o.showBg); set(cutLines, o.cutLines);
+}
+function persist() { try { localStorage.setItem('receiptLayout2', JSON.stringify(layoutObj())); } catch(e){} }
+function restore() {
+  try { localStorage.removeItem('receiptLayout'); } catch(e){}   // old format
+  try { const s = localStorage.getItem('receiptLayout2'); if (s) applyLayout(JSON.parse(s)); } catch(e){}
+  try { const t = localStorage.getItem('receiptTemplate'); if (t) { state.tplData = t; tplStatus.textContent = 'Using the template saved last time'; tplStatus.className='status ok'; } } catch(e){}
+}
+
+/* ---------- template ---------- */
+tplFile.addEventListener('change', async e => {
+  const file = e.target.files[0]; if (!file) return;
+  tplStatus.textContent = 'Loading…'; tplStatus.className = 'status';
+  try {
+    if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+      if (!window.pdfjsLib) throw new Error('The PDF reader could not load. Check the internet connection, or save the template as PNG/JPG.');
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+      const page = await pdf.getPage(1);
+      const vp = page.getViewport({ scale: 1600 / page.getViewport({ scale: 1 }).width });
+      const c = document.createElement('canvas'); c.width = vp.width; c.height = vp.height;
+      await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+      state.tplData = c.toDataURL('image/png');
+    } else {
+      state.tplData = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+    }
+    try { localStorage.setItem('receiptTemplate', state.tplData); } catch(e) {}
+    const img = new Image(); img.onload = () => {
+      const ratio = img.width / img.height, want = RW / RH;
+      const warn = Math.abs(ratio - want) / want > 0.04 ? ' (warning: this picture is not 9 × 6.38 in shape, so it will look stretched)' : '';
+      tplStatus.textContent = 'Template loaded: ' + file.name + warn;
+      tplStatus.className = warn ? 'status err' : 'status ok';
+    }; img.src = state.tplData;
+    renderEditor();
+  } catch (err) { tplStatus.textContent = 'Could not read template: ' + err.message; tplStatus.className = 'status err'; }
+});
+
+/* ---------- student list ---------- */
+dataFile.addEventListener('change', async e => {
+  const file = e.target.files[0]; if (!file) return;
+  dataStatus.className = 'status'; dataStatus.textContent = 'Reading…';
+  try {
+    const buf = await file.arrayBuffer();
+    if (/\.xlsx$/i.test(file.name) && window.ExcelJS) {
+      const wb = new ExcelJS.Workbook(); await wb.xlsx.load(buf);
+      const sheets = wb.worksheets.filter(ws => ws.state !== 'hidden' && ws.state !== 'veryHidden');
+      state.book = { kind:'exceljs', wb, sheets };
+      fillSheetPick(sheets.map(s => s.name));
+    } else {
+      if (!window.XLSX) throw new Error('The spreadsheet reader could not load. Check the internet connection.');
+      const wb = XLSX.read(buf, { type:'array', cellDates:true });
+      state.book = { kind:'sheetjs', wb };
+      fillSheetPick(wb.SheetNames);
+    }
+  } catch (err) { dataStatus.textContent = 'Could not read file: ' + err.message; dataStatus.className = 'status err'; }
+  dataFile.value = '';   // don't keep a reference to the file
+});
+function fillSheetPick(names) {
+  sheetPick.innerHTML = names.map(n => `<option>${esc(n)}</option>`).join('');
+  sheetPick.disabled = names.length < 2;
+  loadSheet(names[0]);
+}
+sheetPick.addEventListener('change', () => loadSheet(sheetPick.value));
+
+function isBoldCell(cell) {
+  if (cell.font && cell.font.bold) return true;
+  const v = cell.value;
+  if (v && Array.isArray(v.richText)) { const segs = v.richText.filter(s => String(s.text).trim()); return segs.length > 0 && segs.every(s => s.font && s.font.bold); }
+  return false;
+}
+function loadSheet(name) {
+  const B = state.book; if (!B) return;
+  let grid = [], bold = [];
+  if (B.kind === 'exceljs') {
+    const ws = B.sheets.find(s => s.name === name);
+    const nr = ws.rowCount, nc = ws.columnCount;
+    for (let r = 1; r <= nr; r++) {
+      const row = ws.getRow(r), vals = [], bs = [];
+      for (let c = 1; c <= nc; c++) {
+        const cell = row.getCell(c);
+        let t = '';
+        const v = cell.type === ExcelJS.ValueType.Formula ? cell.result : cell.value;
+        if (v instanceof Date) t = fmtDate(v);
+        else { try { t = cell.text; } catch(e) { t = v == null ? '' : String(v); } }
+        if (cell.isMerged && cell.master !== cell) t = '';   // count merged text only once
+        vals.push(String(t ?? '').trim()); bs.push(isBoldCell(cell));
+      }
+      grid.push(vals); bold.push(bs);
+    }
+  } else {
+    grid = XLSX.utils.sheet_to_json(B.wb.Sheets[name], { header:1, raw:false, defval:'', dateNF:'mmm d, yyyy' }).map(r => r.map(c => String(c).trim()));
+    bold = null;
+  }
+  loadGrid(grid, bold);
+}
+// grid: array of rows of strings; bold: parallel array of booleans, or null if formatting is unknown
+function loadGrid(grid, bold) {
+  // header row = first row with >=2 filled cells that are all bold
+  let hi = -1, how;
+  if (bold) {
+    hi = grid.findIndex((r, i) => { const filled = r.map((v, c) => [v, bold[i][c]]).filter(([v]) => v !== '');
+      return filled.length >= 2 && filled.every(([, b]) => b); });
+    how = hi >= 0 ? `titles read from the bold row (row ${hi + 1})` : null;
+  }
+  if (hi < 0) {
+    hi = grid.findIndex(r => r.filter(v => v !== '').length >= 2);
+    how = bold ? `no bold row found, so row ${hi + 1} was used as the titles. Bold the title row to be sure.`
+               : `row ${hi + 1} was used as the titles (this file type has no bold formatting)`;
+  }
+  if (hi < 0) { dataStatus.textContent = 'Could not find any column titles in this sheet.'; dataStatus.className = 'status err'; return; }
+  const titleRow = grid[hi];
+  const cols = titleRow.map((v, c) => v !== '' ? c : -1).filter(c => c >= 0);  // only titled columns
+  const headers = []; 
+  for (const c of cols) { let h = titleRow[c], n = 2; while (headers.includes(h)) h = titleRow[c] + ' (' + (n++) + ')'; headers.push(h); }
+  const rows = grid.slice(hi + 1)
+    .map(r => { const o = {}; cols.forEach((c, k) => o[headers[k]] = r[c] ?? ''); return o; })
+    .filter(o => Object.values(o).some(v => v !== ''));
+  if (!rows.length) { dataStatus.textContent = 'Found the titles but no students under them.'; dataStatus.className = 'status err'; return; }
+  state.headers = headers; state.rows = rows;
+  syncFieldsToHeaders();
+  dataStatus.textContent = `${rows.length} students, ${headers.length} columns: ${how}. ${Math.ceil(rows.length / perSheet())} A4 sheet(s).`;
+  dataStatus.className = how.startsWith('no bold') ? 'status err' : 'status ok';
+  renderPreview(); renderFieldTable(); renderEditor(); persist();
+}
+sampleBtn.addEventListener('click', () => {
+  const g = [
+    ['SUPREME STUDENT COUNCIL — ORG FEE COLLECTION','','','',''],
+    ['','','','',''],
+    ['Name','Student No.','Receipt No.','Org Fee','Course & Section'],
+    ['Dela Cruz, Juan P.','2024-00123','0001','150','BSIT 1-A'],
+    ['Santos, Maria Clara R.','2024-00124','0002','150','BSIT 1-A'],
+    ['Reyes, Jose Miguel Antonio B.','2024-00125','0003','150','BSIT 1-B'],
+    ['Garcia, Ana L.','2024-00126','0004','100','BSCS 2-A'],
+    ['Mendoza, Paolo','2024-00127','0005','150','BSCS 2-A'],
+    ['Bautista, Kristine Joy','2024-00128','0006','150','BSIT 3-A'],
+    ['Villanueva, Mark','2024-00129','0007','150','BSIT 3-A'],
+    ['Ramos, Angelica','2024-00130','0008','150','BSCS 1-A'],
+    ['Torres, Daniel','2024-00131','0009','150','BSCS 1-A'],
+    ['Flores, Patricia Mae','2024-00132','0010','150','BSIT 4-A'],
+  ];
+  const b = g.map((r, i) => r.map(() => i === 0 || i === 2));
+  loadGrid(g, b);
+});
+function renderPreview() {
+  const h = state.headers, rows = state.rows.slice(0, 8);
+  dataPreview.style.display = 'block';
+  dataPreview.innerHTML = `<table><thead><tr>${h.map(x => `<th>${esc(x)}</th>`).join('')}</tr></thead><tbody>` +
+    rows.map(r => `<tr>${h.map(x => `<td>${esc(r[x])}</td>`).join('')}</tr>`).join('') +
+    (state.rows.length > 8 ? `<tr><td colspan="${h.length}" class="small">… and ${state.rows.length - 8} more</td></tr>` : '') + '</tbody></table>';
+}
+
+/* ---------- value formatting ---------- */
+function parseAmount(v) { const n = parseFloat(String(v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? null : n; }
+function fmtMoney(v) {
+  const n = parseAmount(v); if (n === null) return String(v || '');
+  return amtPrefix.value + n.toLocaleString('en-US', amtDecimals.checked ? { minimumFractionDigits:2, maximumFractionDigits:2 } : { maximumFractionDigits:2 });
+}
+function numToWords(n) {
+  const ones = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
+  const tens = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
+  const under1000 = x => { let s = ''; if (x >= 100) { s += ones[Math.floor(x/100)] + ' Hundred'; x %= 100; if (x) s += ' '; }
+    if (x >= 20) { s += tens[Math.floor(x/10)]; if (x % 10) s += '-' + ones[x % 10]; } else if (x) s += ones[x]; return s; };
+  const whole = Math.floor(n), cents = Math.round((n - whole) * 100);
+  let w = whole, parts = [];
+  for (const [v, name] of [[1e9,'Billion'],[1e6,'Million'],[1e3,'Thousand']]) if (w >= v) { parts.push(under1000(Math.floor(w / v)) + ' ' + name); w %= v; }
+  if (w) parts.push(under1000(w));
+  let s = (parts.join(' ') || 'Zero') + (whole === 1 ? ' Peso' : ' Pesos');
+  if (cents) s += ' and ' + cents + '/100';
+  return s + ' Only';
+}
+function valueFor(f, row, idx = 0) {
+  if (f.src === 'auto') return receiptNo(idx);
+  let v = f.src === 'fixed' ? f.fixed : (row ? (row[f.col] ?? '') : '');
+  if (f.format === 'money') return fmtMoney(v);
+  if (f.format === 'words') { const n = parseAmount(v); return n === null ? String(v) : numToWords(n); }
+  if (f.format === 'upper') return String(v).toUpperCase();
+  return String(v);
+}
+
+/* ---------- field table ---------- */
+function renderFieldTable() {
+  const tb = fieldTable.querySelector('tbody');
+  if (!state.fields.length) { tb.innerHTML = `<tr><td colspan="7" class="small">Upload the student list (step 2). Its bold column titles will appear here.</td></tr>`; return; }
+  const colOpts = f => state.headers.map(h => `<option ${h === f.col && f.src === 'col' ? 'selected' : ''}>${esc(h)}</option>`).join('') +
+    `<option value="__fixed" ${f.src === 'fixed' ? 'selected' : ''}>Same text for all…</option>`;
+  const fmtOpts = f => [['text','As written'],['upper','ALL CAPS'],['money','Money (₱1,500.00)'],['words','Money in words']]
+    .map(([v, l]) => `<option value="${v}" ${f.format === v ? 'selected' : ''}>${l}</option>`).join('');
+  tb.innerHTML = state.fields.map(f => `<tr class="${state.selected === f.id ? 'sel' : ''}" data-row="${f.id}">
+      <td><input type="checkbox" data-id="${f.id}" data-p="enabled" ${f.enabled ? 'checked' : ''}></td>
+      <td>${f.src === 'auto' ? `<b>Receipt No. (generated)</b>` : f.extra ? `<select data-id="${f.id}" data-p="col">${colOpts(f)}</select>` +
+             (f.src === 'fixed' ? `<br><input type="text" data-id="${f.id}" data-p="fixed" value="${esc(f.fixed)}" placeholder="e.g. Nov 8, 2026" style="margin-top:4px;width:140px">` : '')
+           : `<b>${esc(f.col)}</b>`}</td>
+      <td>${f.src === 'auto' ? '<span class="small">YEAR-SEM-NO.</span>' : `<select data-id="${f.id}" data-p="format">${fmtOpts(f)}</select>`}</td>
+      <td><input type="number" data-id="${f.id}" data-p="size" value="${f.size}" min="4" max="40" step="0.5" style="width:56px"></td>
+      <td><input type="checkbox" data-id="${f.id}" data-p="bold" ${f.bold ? 'checked' : ''}></td>
+      <td><select data-id="${f.id}" data-p="align">${['left','center','right'].map(a => `<option ${f.align === a ? 'selected' : ''}>${a}</option>`).join('')}</select></td>
+      <td>${f.extra ? `<button data-del="${f.id}" title="Remove this field" style="padding:2px 8px">✕</button>` : ''}</td>
+    </tr>`).join('');
+}
+const byId = id => state.fields.find(f => f.id === id);
+fieldTable.addEventListener('input', e => {
+  const el = e.target, f = byId(el.dataset.id), p = el.dataset.p; if (!f) return;
+  if (p === 'col') { if (el.value === '__fixed') f.src = 'fixed'; else { f.src = 'col'; f.col = el.value; } renderFieldTable(); }
+  else if (el.type === 'checkbox') f[p] = el.checked;
+  else if (el.type === 'number') f[p] = parseFloat(el.value) || f[p];
+  else f[p] = el.value;
+  renderEditor(); persist();
+});
+fieldTable.addEventListener('click', e => {
+  const del = e.target.closest('[data-del]');
+  if (del) { state.fields = state.fields.filter(f => f.id !== del.dataset.del); renderFieldTable(); renderEditor(); persist(); return; }
+  const tr = e.target.closest('tr[data-row]');
+  if (tr && !/INPUT|SELECT|BUTTON/.test(e.target.tagName)) { state.selected = tr.dataset.row; renderFieldTable(); renderEditor(); }
+});
+addField.addEventListener('click', () => {
+  if (!state.headers.length) { dataStatus.textContent = 'Upload the student list first.'; dataStatus.className = 'status err'; return; }
+  const money = state.headers.find(isMoneyTitle);
+  const f = newField({ extra:true, col: money || state.headers[0], format: money ? 'words' : 'text', size: 8 });
+  state.fields.push(f); state.selected = f.id; renderFieldTable(); renderEditor(); persist();
+});
+
+/* ---------- editor canvas ---------- */
+function styleText(el, f, mmScale, unit) {
+  el.style.fontFamily = fontFamily.value;
+  el.style.color = fontColor.value;
+  el.style.fontWeight = f.bold ? '700' : '400';
+  el.style.justifyContent = f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start';
+  el.style.fontSize = (f.size * PT_TO_MM * mmScale) + unit;
+  el.style.height = (f.size * PT_TO_MM * 1.25 * mmScale) + unit;
+}
+function fitText(span, box) {
+  let fs = parseFloat(span.style.fontSize), unit = span.style.fontSize.replace(/[0-9.]/g, ''), guard = 40;
+  while (span.scrollWidth > box.clientWidth + 0.5 && guard-- > 0) { fs *= 0.94; span.style.fontSize = fs + unit; }
+}
+function renderEditor() {
+  const c = canvas;
+  c.style.width = RW * PX_PER_MM + 'px'; c.style.height = RH * PX_PER_MM + 'px';
+  c.style.backgroundImage = state.tplData ? `url(${state.tplData})` : '';
+  c.classList.toggle('empty', !state.tplData);
+  c.innerHTML = '';
+  for (const f of state.fields) {
+    if (!f.enabled) continue;
+    const b = document.createElement('div');
+    b.className = 'fbox' + (state.selected === f.id ? ' sel' : '');
+    b.dataset.id = f.id; b.title = fieldLabel(f);
+    b.style.left = f.x * PX_PER_MM + 'px'; b.style.top = f.y * PX_PER_MM + 'px'; b.style.width = f.w * PX_PER_MM + 'px';
+    styleText(b, f, PX_PER_MM, 'px');
+    const span = document.createElement('span'); span.className = 'val';
+    span.textContent = valueFor(f, state.rows[0]) || fieldLabel(f);
+    span.style.fontSize = b.style.fontSize;
+    b.appendChild(span);
+    if (state.selected === f.id) { const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = fieldLabel(f); b.appendChild(tag); }
+    const rs = document.createElement('div'); rs.className = 'rs'; b.appendChild(rs);
+    c.appendChild(b);
+    fitText(span, b);
+  }
+}
+let drag = null;
+canvas.addEventListener('pointerdown', e => {
+  const b = e.target.closest('.fbox'); if (!b) { state.selected = null; renderFieldTable(); renderEditor(); return; }
+  const f = byId(b.dataset.id);
+  state.selected = f.id;
+  drag = { id: f.id, mode: e.target.classList.contains('rs') ? 'resize' : 'move', sx: e.clientX, sy: e.clientY, ox: f.x, oy: f.y, ow: f.w };
+  canvas.setPointerCapture(e.pointerId);
+  renderFieldTable(); renderEditor();
+  e.preventDefault();
+});
+canvas.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const f = byId(drag.id), dx = (e.clientX - drag.sx) / PX_PER_MM, dy = (e.clientY - drag.sy) / PX_PER_MM;
+  if (drag.mode === 'move') { f.x = clamp(round1(drag.ox + dx), -5, RW - 2); f.y = clamp(round1(drag.oy + dy), -5, RH - 2); }
+  else f.w = clamp(round1(drag.ow + dx), 3, RW);
+  const b = canvas.querySelector(`.fbox[data-id="${drag.id}"]`);
+  b.style.left = f.x * PX_PER_MM + 'px'; b.style.top = f.y * PX_PER_MM + 'px'; b.style.width = f.w * PX_PER_MM + 'px';
+});
+canvas.addEventListener('pointerup', () => { if (drag) { drag = null; renderEditor(); persist(); } });
+document.addEventListener('keydown', e => {
+  if (!state.selected || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  const step = e.shiftKey ? 2 : 0.5, f = byId(state.selected); if (!f) return;
+  const m = { ArrowLeft:[-step,0], ArrowRight:[step,0], ArrowUp:[0,-step], ArrowDown:[0,step] }[e.key];
+  if (!m) return;
+  e.preventDefault(); f.x = round1(f.x + m[0]); f.y = round1(f.y + m[1]); renderEditor(); persist();
+});
+[amtPrefix, amtDecimals, fontFamily, fontColor].forEach(el => el.addEventListener('input', () => { renderEditor(); persist(); }));
+[orient, offX, offY, gap, showBg, cutLines].forEach(el => el.addEventListener('input', persist));
+
+/* ---------- save/load layout ---------- */
+saveLayout.addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(layoutObj(), null, 2)], { type:'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'receipt-layout.json'; a.click();
+});
+loadLayout.addEventListener('change', async e => {
+  const file = e.target.files[0]; if (!file) return;
+  try { applyLayout(JSON.parse(await file.text())); renderFieldTable(); renderEditor(); persist(); }
+  catch (err) { tplStatus.textContent = 'That layout file could not be read.'; tplStatus.className = 'status err'; }
+  loadLayout.value = '';
+});
+
+/* ---------- generate sheets ---------- */
+function grid() {
+  const land = orient.value === 'landscape';
+  const PW = land ? 297 : 210, PH = land ? 210 : 297;
+  const cols = land ? 3 : 2, rows = land ? 3 : 4;
+  let gg = Math.max(0, parseFloat(gap.value) || 0);
+  while (gg > 0 && (cols * RW + (cols - 1) * gg > PW - 4 || rows * RH + (rows - 1) * gg > PH - 4)) gg -= 0.5;
+  const tw = cols * RW + (cols - 1) * gg, th = rows * RH + (rows - 1) * gg;
+  return { PW, PH, cols, rows, gap: gg, mx: (PW - tw) / 2 + (parseFloat(offX.value) || 0), my: (PH - th) / 2 + (parseFloat(offY.value) || 0) };
+}
+function perSheet() { const g = grid(); return g.cols * g.rows; }
+genBtn.addEventListener('click', generate);
+function generate() {
+  if (!state.rows.length) { genStatus.textContent = 'Upload the student list first (step 2).'; genStatus.className = 'status err'; return; }
+  const shown = state.fields.filter(f => f.enabled);
+  if (!shown.length) { genStatus.textContent = 'Tick at least one field in step 3.'; genStatus.className = 'status err'; return; }
+  const G = grid(), per = G.cols * G.rows;
+  pageStyle.textContent = `@page { size: A4 ${orient.value}; margin: 0; }`;
+  sheets.innerHTML = '';
+  const total = Math.ceil(state.rows.length / per);
+  const screenScale = Math.min(1, 900 / (G.PW * 3.7795));
+  for (let p = 0; p < total; p++) {
+    const label = document.createElement('div'); label.className = 'sheet-label'; label.textContent = `Sheet ${p + 1} of ${total}`;
+    const holder = document.createElement('div'); holder.className = 'sheet-holder';
+    holder.style.transform = `scale(${screenScale})`; holder.style.height = (G.PH * 3.7795 * screenScale) + 'px';
+    const sheet = document.createElement('div'); sheet.className = 'sheet';
+    sheet.style.width = G.PW + 'mm'; sheet.style.height = (G.PH - 0.5) + 'mm';
+    for (let i = 0; i < per; i++) {
+      const row = state.rows[p * per + i]; if (!row) break;
+      const r = Math.floor(i / G.cols), c = i % G.cols;
+      const rc = document.createElement('div'); rc.className = 'rc' + (cutLines.checked ? ' cut' : '');
+      rc.style.left = (G.mx + c * (RW + G.gap)) + 'mm'; rc.style.top = (G.my + r * (RH + G.gap)) + 'mm';
+      rc.style.width = RW + 'mm'; rc.style.height = RH + 'mm';
+      if (showBg.checked && state.tplData) rc.style.backgroundImage = `url(${state.tplData})`;
+      for (const f of shown) {
+        const el = document.createElement('div'); el.className = 'rf';
+        el.style.left = f.x + 'mm'; el.style.top = f.y + 'mm'; el.style.width = f.w + 'mm';
+        styleText(el, f, 1, 'mm');
+        const span = document.createElement('span'); span.textContent = valueFor(f, row, p * per + i); span.style.fontSize = el.style.fontSize;
+        el.appendChild(span); rc.appendChild(el);
+      }
+      sheet.appendChild(rc);
+    }
+    holder.appendChild(sheet);
+    const wrap = document.createElement('div'); wrap.appendChild(label); wrap.appendChild(holder);
+    sheets.appendChild(wrap);
+  }
+  requestAnimationFrame(() => sheets.querySelectorAll('.rf').forEach(el => fitText(el.firstChild, el)));
+  printBtn.disabled = false;
+  const auto = state.fields.find(f => f.src === 'auto' && f.enabled);
+  genStatus.textContent = `${state.rows.length} receipts on ${total} A4 sheet(s).` +
+    (auto ? ` Receipt numbers ${receiptNo(0)} to ${receiptNo(state.rows.length - 1)}.` : '');
+  markUsed.disabled = !auto; exportList.disabled = false; usedStatus.textContent = '';
+  genStatus.className = 'status ok';
+}
+printBtn.addEventListener('click', () => window.print());
+markUsed.addEventListener('click', () => {
+  const next = (parseInt(rnStart.value) || 1) + state.rows.length;
+  rnStart.value = next; persist(); updateRnExample();
+  usedStatus.textContent = `Saved. The next batch starts at ${receiptNo(0)}. Click Generate again only if you want to print a new batch.`;
+  usedStatus.className = 'status ok'; markUsed.disabled = true;
+  sheets.innerHTML = ''; printBtn.disabled = true;
+});
+exportList.addEventListener('click', () => {
+  // Only on request: a file for the treasurer's records. Nothing is kept by this page.
+  const auto = state.fields.find(f => f.src === 'auto' && f.enabled);
+  const data = state.rows.map((r, i) => auto ? Object.assign({ 'Receipt No. (generated)': receiptNo(i) }, r) : Object.assign({}, r));
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Receipts');
+  XLSX.writeFile(wb, `receipts-${rnYear.value.trim()}-${rnSem.value.trim()}.xlsx`);
+});
+function updateRnExample() { rnExample.textContent = receiptNo(0); }
+[rnYear, rnSem, rnStart, rnDigits].forEach(el => el.addEventListener('input', () => {
+  updateRnExample(); renderEditor(); persist();
+  if (sheets.innerHTML) { sheets.innerHTML = ''; printBtn.disabled = true; markUsed.disabled = true; genStatus.textContent = 'Numbering changed: click Generate again.'; genStatus.className = 'status'; }
+}));
+
+/* ---------- clear ---------- */
+clearAll.addEventListener('click', () => {
+  try { localStorage.removeItem('receiptLayout2'); localStorage.removeItem('receiptLayout'); localStorage.removeItem('receiptTemplate'); } catch(e){}
+  state = { tplData:null, headers:[], rows:[], book:null, fields:[], selected:null };
+  sheets.innerHTML = ''; dataPreview.style.display = 'none'; dataPreview.innerHTML = '';
+  dataFile.value = ''; tplFile.value = ''; sheetPick.innerHTML = ''; sheetPick.disabled = true; printBtn.disabled = true;
+  dataStatus.textContent = 'No list yet'; dataStatus.className = 'status';
+  tplStatus.textContent = 'No template yet'; tplStatus.className = 'status';
+  genStatus.textContent = 'Everything cleared.'; genStatus.className = 'status ok';
+  rnYear.value = new Date().getFullYear(); rnSem.value = '1'; rnStart.value = 1; rnDigits.value = 4; updateRnExample();
+  markUsed.disabled = true; exportList.disabled = true; usedStatus.textContent = '';
+  renderFieldTable(); renderEditor();
+});
+
+/* ---------- helpers ---------- */
+function fmtDate(d) { return isNaN(d) ? '' : d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric', timeZone:'UTC' }); }
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c])); }
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function round1(v) { return Math.round(v * 10) / 10; }
+
+rnYear.value = new Date().getFullYear();
+restore(); updateRnExample(); renderFieldTable(); renderEditor();
+</script>
+</body>
+</html>
