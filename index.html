@@ -115,6 +115,16 @@
   .seg label { flex:1; text-align:center; padding:8px; cursor:pointer; font-size:13px; color:var(--muted); background:var(--surface2); }
   .seg input { display:none; }
   .seg label:has(input:checked) { background:var(--accent); color:var(--accent-ink); font-weight:600; }
+  .modes { border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  .mrow { display:grid; grid-template-columns:1fr auto; gap:6px 10px; align-items:center; padding:9px 12px; border-bottom:1px solid var(--line); background:var(--surface2); }
+  .mrow:last-child { border-bottom:0; }
+  .mrow .sec { font-size:13px; color:var(--text); font-weight:500; }
+  .mrow .sec small { color:var(--muted); font-weight:400; margin-left:6px; }
+  .mrow input { grid-column:1 / -1; padding:6px 10px; font-size:13px; }
+  .tog { display:flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .tog button { border:0; background:var(--surface); color:var(--muted); padding:5px 12px; font:500 12px Poppins, system-ui, sans-serif; cursor:pointer; }
+  .tog button.on { background:var(--accent); color:var(--accent-ink); }
+  .mode-all { display:flex; gap:12px; justify-content:flex-end; margin-top:6px; }
   .or-ex { font-size:13px; color:var(--muted); margin:-4px 0 4px; }
   .or-ex b { color:var(--text); font-weight:600; }
 
@@ -298,7 +308,11 @@
         </div>
         <p class="small" id="qDateNote" style="margin:-6px 0 12px"></p>
         <label class="f"><span>Payment for</span><input type="text" id="qFor"></label>
-        <label class="f"><span>Mode of payment</span>
+        <div class="f" id="qModeSecWrap" style="display:none"><span style="display:block;margin-bottom:5px">Mode of payment per section</span>
+          <div class="modes" id="qModeSec"></div>
+          <div class="mode-all"><button class="link" type="button" data-all="Cash">All Cash</button><button class="link" type="button" data-all="GCash">All GCash</button></div>
+        </div>
+        <label class="f" id="qModeGlobal"><span>Mode of payment</span>
           <div class="seg"><label><input type="radio" name="qMode" value="Cash">Cash</label><label><input type="radio" name="qMode" value="GCash">GCash</label></div>
         </label>
         <label class="f" id="qRefWrap" style="display:none"><span>GCash ref No. (same for all)</span><input type="text" id="qRef"></label>
@@ -415,6 +429,7 @@ let state = {
   fields: [],             // [{id,src:'col'|'fixed',col,fixed,enabled,x,y,w,size,bold,align,format}]
   selected: null,
   pv: 0,                  // which student the preview shows
+  secMode: {},            // { 'BSIT 1-2': { mode:'GCash', ref:'' } }
   step: 1,
 };
 let nextId = 1;
@@ -760,7 +775,7 @@ function loadGrid(grid, bold) {
     .map(r => { const o = {}; cols.forEach((c, k) => o[headers[k]] = r[c] ?? ''); return o; })
     .filter(o => Object.values(o).some(v => v !== ''));
   if (!rows.length) { dataStatus.textContent = 'Found the titles but no students under them.'; dataStatus.className = 'status err'; return; }
-  state.headers = headers; state.rows = rows;
+  state.headers = headers; state.rows = rows; state.secMode = {};
   syncFieldsToHeaders();
   state.pv = 0;
   dataStatus.textContent = how.charAt(0).toUpperCase() + how.slice(1) + '.';
@@ -788,11 +803,12 @@ function renderPreview() {
   const orOn = state.fields.some(f => f.src === 'auto' && f.enabled);
   dataPreview.style.display = n ? '' : 'none';
   const dateF = state.fields.find(f => f.slot === 'date' && f.enabled);
+  const gF = state.fields.find(f => f.slot === 'gcash');
   const dateCell = (r, i) => { if (!dateF) return ''; const own = !!r.__date;
     const v = strToIso(own ? r.__date : valueFor(dateF, r, i));
     return `<td><input type="date" class="rowdate${own ? ' own' : ''}" data-i="${i}" value="${v}" title="${own ? 'Own date for this student' : 'Uses the default date from step 2'}"></td>`; };
-  dataPreview.innerHTML = !n ? '' : `<table class="list"><thead><tr><th>#</th>${orOn ? '<th>OR No.</th>' : ''}${h.map(x => `<th>${esc(x)}</th>`).join('')}${dateF ? '<th>Date received</th>' : ''}<th></th></tr></thead><tbody>` +
-    state.rows.map((r, i) => `<tr><td class="num">${i + 1}</td>${orOn ? `<td class="or">${esc(receiptNo(i))}</td>` : ''}${h.map(x => `<td>${esc(r[x])}</td>`).join('')}${dateCell(r, i)}<td><button class="x" data-rm="${i}" title="Remove">✕</button></td></tr>`).join('') +
+  dataPreview.innerHTML = !n ? '' : `<table class="list"><thead><tr><th>#</th>${orOn ? '<th>OR No.</th>' : ''}${h.map(x => `<th>${esc(x)}</th>`).join('')}${dateF ? '<th>Date received</th>' : ''}${gF ? '<th>Mode</th>' : ''}<th></th></tr></thead><tbody>` +
+    state.rows.map((r, i) => `<tr><td class="num">${i + 1}</td>${orOn ? `<td class="or">${esc(receiptNo(i))}</td>` : ''}${h.map(x => `<td>${esc(r[x])}</td>`).join('')}${dateCell(r, i)}${gF ? `<td class="num">${valueFor(gF, r, i) === '✓' ? 'GCash' : 'Cash'}</td>` : ''}<td><button class="x" data-rm="${i}" title="Remove">✕</button></td></tr>`).join('') +
     '</tbody></table>';
 }
 dataPreview.addEventListener('change', e => {
@@ -829,7 +845,21 @@ function numToWords(n) {
   if (cents) s += ' and ' + cents + '/100';
   return s + ' Only';
 }
+// Mode of payment chosen per section in step 2 (kept in memory only)
+function secColumn() { return state.headers.find(x => /section|course|year/i.test(x)); }
+function sectionsInList() {
+  const col = secColumn(); if (!col) return [];
+  const m = new Map(); state.rows.forEach(r => { const k = r[col] || ''; if (k) m.set(k, (m.get(k) || 0) + 1); });
+  return [...m];
+}
+function secModeOf(row) { const col = secColumn(); return col && state.secMode ? state.secMode[row[col]] || null : null; }
 function valueFor(f, row, idx = 0) {
+  const sm = row && f.slot && /^(cash|gcash|ref)$/.test(f.slot) ? secModeOf(row) : null;
+  if (sm) {
+    if (f.slot === 'ref') return sm.mode === 'GCash' ? (sm.ref || '') : '';
+    const g = sm.mode === 'GCash';
+    return f.format === 'checkgcash' ? (g ? '✓' : '') : f.format === 'checkcash' ? (g ? '' : '✓') : sm.mode;
+  }
   if (f.slot === 'date' && row && row.__date) return row.__date;
   if (f.src === 'auto') return receiptNo(idx);
   let v = f.src === 'fixed' ? f.fixed : (row ? (row[f.col] ?? '') : '');
@@ -1036,9 +1066,38 @@ function renderQuick() {
   qFor.value = val('for'); qFor.placeholder = ph('for');
   const mode = /g-?cash/i.test(val('cash')) ? 'GCash' : 'Cash';
   document.querySelectorAll('input[name=qMode]').forEach(r => r.checked = r.value === mode);
-  qRefWrap.style.display = mode === 'GCash' ? '' : 'none';
   qRef.value = val('ref');
+  const secs = sectionsInList();
+  qModeSecWrap.style.display = secs.length ? '' : 'none';
+  qModeGlobal.style.display = secs.length ? 'none' : '';
+  qRefWrap.style.display = !secs.length && mode === 'GCash' ? '' : 'none';
+  if (secs.length) renderModes(secs, mode);
 }
+function renderModes(secs, def) {
+  qModeSec.innerHTML = secs.map(([k, n]) => {
+    const sm = state.secMode[k] || { mode: def, ref: '' };
+    return `<div class="mrow"><span class="sec">${esc(k)}<small>${n} student${n === 1 ? '' : 's'}</small></span>
+      <div class="tog" data-sec="${esc(k)}"><button type="button" data-m="Cash" class="${sm.mode === 'Cash' ? 'on' : ''}">Cash</button><button type="button" data-m="GCash" class="${sm.mode === 'GCash' ? 'on' : ''}">GCash</button></div>
+      ${sm.mode === 'GCash' ? `<input type="text" class="secref" data-sec="${esc(k)}" value="${esc(sm.ref || '')}" placeholder="GCash ref No. for ${esc(k)} (optional)">` : ''}</div>`;
+  }).join('');
+}
+function modesChanged() { renderEditor(); renderPreview(); if (state.step === 3) generate(); }
+qModeSec.addEventListener('click', e => {
+  const b = e.target.closest('.tog button'); if (!b) return;
+  const k = b.parentElement.dataset.sec, cur = state.secMode[k] || { ref: '' };
+  state.secMode[k] = { mode: b.dataset.m, ref: cur.ref || '' };
+  renderQuick(); modesChanged();
+});
+qModeSec.addEventListener('input', e => {
+  if (!e.target.classList.contains('secref')) return;
+  const k = e.target.dataset.sec; state.secMode[k] = { mode: 'GCash', ref: e.target.value };
+  modesChanged();
+});
+qModeSecWrap.addEventListener('click', e => {
+  const b = e.target.closest('[data-all]'); if (!b) return;
+  for (const [k] of sectionsInList()) state.secMode[k] = { mode: b.dataset.all, ref: (state.secMode[k] || {}).ref || '' };
+  renderQuick(); modesChanged();
+});
 function quickChanged() { renderFieldTable(); renderEditor(); persist(); if (state.step === 3) generate(); }
 qAmount.addEventListener('input', () => { setFixed('figures', qAmount.value); setFixed('words', qAmount.value); quickChanged(); });
 qDate.addEventListener('change', () => { if (!qDate.value) return; setFixed('date', isoToStr(qDate.value)); renderPreview(); renderQuick(); quickChanged(); });
@@ -1183,7 +1242,7 @@ pdfBtn.addEventListener('click', savePdf);
 markUsed.addEventListener('click', () => {
   const next = (parseInt(rnStart.value) || 1) + state.rows.length;
   rnStart.value = next; persist();
-  state.rows = []; state.headers = []; state.book = null; state.pv = 0;
+  state.rows = []; state.headers = []; state.book = null; state.pv = 0; state.secMode = {};
   syncFieldsToHeaders(); sheets.innerHTML = ''; afterCard.classList.remove('show');
   renderPreview(); renderFieldTable(); renderQuick(); renderEditor(); updateRnExample(); generate();
   showResult(); dataStatus.textContent = `Batch finished ✓ The next batch starts at OR No. ${receiptNo(0)}. Attach the next lists when ready.`; dataStatus.className = 'status ok';
@@ -1197,6 +1256,8 @@ exportList.addEventListener('click', () => {
     const o = auto ? { 'OR No.': receiptNo(i) } : {};
     for (const h of state.headers) o[h] = r[h];
     if (dateF) o['Date received'] = valueFor(dateF, r, i);
+    const cashF = state.fields.find(f => f.slot === 'gcash'), refF = state.fields.find(f => f.slot === 'ref');
+    if (cashF) { o['Mode of payment'] = valueFor(cashF, r, i) === '✓' ? 'GCash' : 'Cash'; if (refF) o['GCash ref No.'] = valueFor(refF, r, i); }
     return o;
   });
   const ws = XLSX.utils.json_to_sheet(data);
@@ -1212,7 +1273,7 @@ function updateRnExample() { const n = state.rows.length; rnExample.textContent 
 /* ---------- clear ---------- */
 clearAll.addEventListener('click', () => {
   try { localStorage.removeItem('receiptLayout5'); localStorage.removeItem('receiptTemplate'); } catch(e){}
-  state = { tplData:DEFAULT_TPL, headers:[], rows:[], book:null, fields:[], selected:null, pv:0, step:1 }; syncFieldsToHeaders();
+  state = { tplData:DEFAULT_TPL, headers:[], rows:[], book:null, fields:[], selected:null, pv:0, step:1, secMode:{} }; syncFieldsToHeaders();
   sheets.innerHTML = ''; dataPreview.innerHTML = ''; resultCard.classList.remove('show'); afterCard.classList.remove('show');
   dataFile.value = ''; tplFile.value = ''; sheetPick.innerHTML = ''; sheetPickWrap.style.display = 'none';
   tplStatus.textContent = 'Using the built-in I-CONNECT Official Receipt'; tplStatus.className = 'status ok';
