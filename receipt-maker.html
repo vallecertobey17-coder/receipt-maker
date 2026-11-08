@@ -100,7 +100,10 @@
   .check-head { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; margin-top:14px; }
   .check-head b { font-weight:600; }
   .okc { color:var(--ok); font-size:13px; } .badc { color:var(--err); font-size:13px; font-weight:500; }
-  table.list input.expin { width:80px; padding:4px 8px; font-size:13px; }
+  table.list input.expin { width:80px; padding:6px 10px; font-size:14px; text-align:center; }
+  details.paste { margin:10px 0 4px; }
+  details.paste summary { cursor:pointer; color:var(--accent); font-size:13px; }
+  details.paste textarea { width:100%; margin-top:8px; padding:9px 11px; border:1px solid var(--line); border-radius:9px; background:var(--surface2); color:var(--text); font:13px/1.4 ui-monospace, monospace; }
   tr.skip td { white-space:normal; color:var(--warn); font-size:12px; background:color-mix(in srgb, var(--warn) 7%, transparent); }
   .mrow .rowctl { display:flex; gap:8px; align-items:center; }
   .mrow input[type=date] { grid-column:auto; width:auto; padding:5px 8px; font-size:12px; }
@@ -854,34 +857,91 @@ sampleBtn.addEventListener('click', () => {
   const b = g.map((r, i) => r.map(() => i <= 1));
   loadGrid(g, b);
 });
+function checkResult(read, e) {
+  if (e === undefined || e === '') return '<span class="small">—</span>';
+  const d = read - (+e);
+  return d === 0 ? '<span class="okc">✓ matches</span>' : `<span class="badc">⚠ ${Math.abs(d)} ${d < 0 ? 'missing' : 'extra'}</span>`;
+}
+function checkSummary() {
+  const per = new Map(sectionsInList()); let bad = 0, filled = 0;
+  for (const [k, v] of per) { const e = state.expected[k]; if (e !== undefined && e !== '') { filled++; if (+e !== v) bad++; } }
+  return !filled ? '' : bad ? `<span class="badc">${bad} section${bad === 1 ? " doesn't" : "s don't"} match</span>` : '<span class="okc">✓ all sections match</span>';
+}
 function renderCheck(per) {
   if (!per.size) { secCheck.innerHTML = ''; return; }
   const exp = state.expected || {};
-  let bad = 0;
   const rows = [...per].map(([k, v]) => {
     const st = (state.secStats || {})[k] || { files: new Set(), skipped: [] };
-    const e = exp[k];
-    let res = '<span class="small">type the count →</span>';
-    if (e !== undefined && e !== '') {
-      const d = v - (+e);
-      if (d === 0) res = '<span class="okc">✓ matches</span>';
-      else { bad++; res = `<span class="badc">⚠ ${Math.abs(d)} ${d < 0 ? 'missing' : 'extra'}</span>`; }
-    }
     const sk = st.skipped.length ? `<tr class="skip"><td colspan="5">Not read as a name in ${esc(k)}: ${st.skipped.slice(0, 8).map(t => `“${esc(t)}”`).join(', ')}${st.skipped.length > 8 ? ', …' : ''}</td></tr>` : '';
-    return `<tr><td><b>${esc(k)}</b></td><td class="small">${esc([...st.files].join(', ') || '—')}</td><td class="num">${v}</td>
-      <td><input type="number" min="0" class="expin" data-sec="${esc(k)}" value="${e ?? ''}" placeholder="—"></td><td>${res}</td></tr>${sk}`;
+    return `<tr data-sec="${esc(k)}"><td><b>${esc(k)}</b></td><td class="small">${esc([...st.files].join(', ') || '—')}</td><td class="num">${v}</td>
+      <td><input type="text" inputmode="numeric" autocomplete="off" class="expin" data-sec="${esc(k)}" data-read="${v}" value="${esc(exp[k] ?? '')}" placeholder="—"></td><td class="res">${checkResult(v, exp[k])}</td></tr>${sk}`;
   }).join('');
-  secCheck.innerHTML = `<div class="check-head"><b>Section check</b><span class="small">Type the treasurer's number of students for each section to compare.</span>${bad ? `<span class="badc">${bad} section${bad === 1 ? " doesn't" : "s don't"} match</span>` : ''}</div>
+  secCheck.innerHTML = `<div class="check-head"><b>Section check</b><span class="small">Type the treasurer's count for each section (Enter = next), or paste the whole tracking sheet.</span><span id="checkSum">${checkSummary()}</span></div>
+    <details class="paste"><summary>📋 Paste counts from the tracking sheet</summary>
+      <textarea id="pasteBox" rows="5" placeholder="Copy the table from the tracking sheet (BSIS / BSIT, Status, Date, No. of Students) and paste it here"></textarea>
+      <div class="inline" style="margin-top:6px"><button class="btn" type="button" id="pasteApply">Fill in counts</button><label><input type="checkbox" id="pasteDates" checked> also use its dates as each section's date received</label><span class="status" id="pasteMsg"></span></div>
+    </details>
     <div class="table-wrap" style="max-height:none"><table class="list"><thead><tr><th>Section</th><th>File</th><th>Read</th><th>Expected</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
+function saveExpected() { try { localStorage.setItem('rmExpected', JSON.stringify(state.expected)); } catch (err) {} }
+// typing only updates this row: the box keeps focus and the cursor stays put
 secCheck.addEventListener('input', e => {
   const el = e.target; if (!el.classList.contains('expin')) return;
-  state.expected[el.dataset.sec] = el.value;
-  if (el.value === '') delete state.expected[el.dataset.sec];
-  try { localStorage.setItem('rmExpected', JSON.stringify(state.expected)); } catch (err) {}
-  const pos = el.selectionStart; const key = el.dataset.sec;
-  renderPreview();
-  const again = secCheck.querySelector(`.expin[data-sec="${CSS.escape(key)}"]`); if (again) { again.focus(); try { again.setSelectionRange(pos, pos); } catch (err) {} }
+  const clean = el.value.replace(/\D/g, ''); if (clean !== el.value) el.value = clean;
+  if (clean === '') delete state.expected[el.dataset.sec]; else state.expected[el.dataset.sec] = clean;
+  saveExpected();
+  el.closest('tr').querySelector('.res').innerHTML = checkResult(+el.dataset.read, state.expected[el.dataset.sec]);
+  const sum = document.getElementById('checkSum'); if (sum) sum.innerHTML = checkSummary();
+});
+secCheck.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || !e.target.classList.contains('expin')) return;
+  e.preventDefault();
+  const all = [...secCheck.querySelectorAll('.expin')], i = all.indexOf(e.target);
+  if (all[i + 1]) { all[i + 1].focus(); all[i + 1].select(); } else e.target.blur();
+});
+secCheck.addEventListener('focusin', e => { if (e.target.classList.contains('expin')) e.target.select(); });
+// "BSIS ... No. of Students" header rows give the course; "2-2  Received  09-16  46" rows give section, date and count
+function parseTracking(text) {
+  const out = []; let course = '';
+  for (const raw of text.split(/\r?\n/)) {
+    const cells = raw.split(/\t|\s{2,}|\|/).map(c => c.trim()).filter(Boolean);
+    if (!cells.length) continue;
+    const head = cells[0];
+    if (/^[A-Za-z]{2,8}$/.test(head) && (cells.length === 1 || /status|date|student|no\./i.test(cells.slice(1).join(' ')))) { course = head.toUpperCase(); continue; }
+    let sec = null, rest = cells.slice(1);
+    let m = head.match(/^([A-Za-z]{2,8})\s*(\d+\s*-\s*\d+)$/);
+    if (m) sec = `${m[1].toUpperCase()} ${m[2].replace(/\s/g, '')}`;
+    else if (/^\d+\s*-\s*\d+$/.test(head)) sec = (course ? course + ' ' : '') + head.replace(/\s/g, '');
+    else if (/^[A-Za-z]{2,8}$/.test(head) && cells[1] && /^\d+\s*-\s*\d+$/.test(cells[1])) { sec = `${head.toUpperCase()} ${cells[1].replace(/\s/g, '')}`; rest = cells.slice(2); }
+    if (!sec) continue;
+    const nums = rest.filter(c => /^\d+$/.test(c)), date = rest.find(c => /^\d{1,2}[-/]\d{1,2}([-/]\d{2,4})?$/.test(c));
+    if (!nums.length) continue;
+    out.push({ sec, count: nums[nums.length - 1], date });
+  }
+  return out;
+}
+const secKey = t => String(t).toUpperCase().replace(/[^A-Z0-9]/g, '');
+secCheck.addEventListener('click', e => {
+  if (e.target.id !== 'pasteApply') return;
+  const items = parseTracking(document.getElementById('pasteBox').value);
+  const msg = document.getElementById('pasteMsg');
+  if (!items.length) { msg.textContent = 'No section counts found in what was pasted.'; msg.className = 'status err'; return; }
+  const inList = new Map(sectionsInList().map(([k]) => [secKey(k), k]));
+  const useDates = document.getElementById('pasteDates').checked, yr = rnYear.value.trim() || new Date().getFullYear();
+  let matched = 0;
+  for (const it of items) {
+    const k = inList.get(secKey(it.sec)) || it.sec;
+    if (inList.has(secKey(it.sec))) matched++;
+    state.expected[k] = it.count;
+    if (useDates && it.date) {
+      const [mm, dd, y] = it.date.split(/[-/]/);
+      const full = y ? (y.length === 2 ? '20' + y : y) : yr;
+      state.secMode[k] = Object.assign({}, state.secMode[k], { date: `${mm.padStart(2, '0')}/${dd.padStart(2, '0')}/${full}` });
+    }
+  }
+  saveExpected(); renderPreview(); renderQuick(); renderEditor();
+  const m2 = document.getElementById('pasteMsg');
+  if (m2) { m2.textContent = `Filled in ${items.length} section${items.length === 1 ? '' : 's'} (${matched} in the attached lists).`; m2.className = 'status ok'; }
 });
 function renderPreview() {
   try { fillSecList(); } catch (e) {}
