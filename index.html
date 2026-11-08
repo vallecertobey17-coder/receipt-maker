@@ -97,6 +97,13 @@
   table.list td.num, table.list td.or { color:var(--muted); font-variant-numeric:tabular-nums; }
   table.list input[type=date] { width:auto; padding:4px 8px; font-size:12px; border-radius:7px; }
   table.list input.own { border-color:var(--accent); }
+  .check-head { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; margin-top:14px; }
+  .check-head b { font-weight:600; }
+  .okc { color:var(--ok); font-size:13px; } .badc { color:var(--err); font-size:13px; font-weight:500; }
+  input.expin { width:80px; padding:4px 8px; font-size:13px; }
+  tr.skip td { white-space:normal; color:var(--warn); font-size:12px; background:color-mix(in srgb, var(--warn) 7%, transparent); }
+  .mrow .rowctl { display:flex; gap:8px; align-items:center; }
+  .mrow input[type=date] { grid-column:auto; width:auto; padding:5px 8px; font-size:12px; }
   .add-row { display:grid; grid-template-columns:2fr 1fr auto; gap:8px; margin-top:12px; }
   @media (max-width: 700px) { .add-row { grid-template-columns:1fr; } }
   .x { border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:14px; padding:2px 6px; border-radius:6px; }
@@ -272,7 +279,7 @@
         <label id="sheetPickWrap" style="display:none">Sheet <select id="sheetPick"></select></label>
       </div>
       <div id="dataStatus" class="status">No list yet</div>
-      <div class="sec-chips" id="secChips"></div>
+      <div id="secCheck"></div>
       <div class="table-wrap" id="dataPreview"></div>
       <form class="add-row" id="addForm" autocomplete="off">
         <input type="text" id="addName" placeholder="Add a missing student: SURNAME, FIRST M.">
@@ -316,7 +323,7 @@
         </div>
         <p class="small" id="qDateNote" style="margin:-6px 0 12px"></p>
         <label class="f"><span>Payment for</span><input type="text" id="qFor"></label>
-        <div class="f" id="qModeSecWrap" style="display:none"><span style="display:block;margin-bottom:5px">Mode of payment per section</span>
+        <div class="f" id="qModeSecWrap" style="display:none"><span style="display:block;margin-bottom:5px">Per section: payment mode and date received</span>
           <div class="modes" id="qModeSec"></div>
           <div class="mode-all"><button class="link" type="button" data-all="Cash">All Cash</button><button class="link" type="button" data-all="GCash">All GCash</button></div>
         </div>
@@ -437,7 +444,9 @@ let state = {
   fields: [],             // [{id,src:'col'|'fixed',col,fixed,enabled,x,y,w,size,bold,align,format}]
   selected: null,
   pv: 0,                  // which student the preview shows
-  secMode: {},            // { 'BSIT 1-2': { mode:'GCash', ref:'' } }
+  secMode: {},            // { 'BSIT 1-2': { mode:'GCash', ref:'', date:'09/17/2026' } }
+  secStats: {},           // per section: which files, which lines were skipped
+  expected: (() => { try { return JSON.parse(localStorage.getItem('rmExpected') || '{}'); } catch (e) { return {}; } })(),
   step: 1,
 };
 let nextId = 1;
@@ -587,6 +596,8 @@ const PERSON_RE = /^\p{L}[\p{L}\p{M}.'’`\- ]*,\s*\p{L}[\p{L}\p{M}.'’`\-, ]*$
 // a name written without a comma, e.g. "JUAN P. DELA CRUZ" (only trusted inside a NAME column)
 const NAME_LIKE = /^\p{L}[\p{L}\p{M}.'’`\- ]*\s\p{L}[\p{L}\p{M}.'’`\-, ]*$/u;
 const NOT_NAME_RE = /signature|prepared by|noted by|approved by|checked by|certified|^total\b|^page\s*\d|^no\.?$|^names?\b/i;
+// the footer of each membership form ends the list of names
+const END_RE = /total\s+amount|remitted\s+by|received\s+by|prepared\s+by|noted\s+by|^note\s*:|^(president|treasurer|auditor|date)(\s+(president|treasurer|auditor|date))*$/i;
 const looksLikeName = (t, inNameColumn) => !!t && !NOT_NAME_RE.test(t) && (PERSON_RE.test(t) || (inNameColumn && NAME_LIKE.test(t)));
 async function readDocx(file) {
   if (!window.mammoth) throw new Error('The Word document reader could not load. Check the internet connection.');
@@ -594,6 +605,7 @@ async function readDocx(file) {
   const body = new DOMParser().parseFromString(value, 'text/html').body;
   const rows = [], skipped = []; let section = '', sem = '';
   let carryCols = null, carryWidth = 0;       // a NAME table that continues as a new table (e.g. on page 2)
+  let ended = false;                          // true after the form's footer (TOTAL AMOUNT, REMITTED BY, …)
   const takeSection = t => { const m = t.match(SEC_LABEL_RE); if (m && m[2].trim()) { section = m[2].trim(); return true; } return !!m; };
   const pushCell = (td, strict) => {
     // one cell can hold several names on separate lines
@@ -603,7 +615,7 @@ async function readDocx(file) {
       const n = cleanName(t);
       if (!n || NAME_HDR_RE.test(n)) continue;
       if (looksLikeName(n, true) || (!strict && /\p{L}/u.test(n) && !/\d{3,}/.test(n) && !NOT_NAME_RE.test(n))) rows.push([n, section]);
-      else skipped.push(n);
+      else skipped.push([n, section]);
     }
   };
   for (const el of body.children) {
@@ -613,9 +625,11 @@ async function readDocx(file) {
         const tds = [...tr.children], cells = tds.map(normTxt);
         if (!cells.some(Boolean)) continue;
         const li = cells.findIndex(c => SEC_LABEL_RE.test(c));
-        if (li >= 0) { const inCell = cells[li].match(SEC_LABEL_RE)[2].trim(); section = inCell || cells.slice(li + 1).find(c => c) || section; continue; }
+        if (li >= 0) { const inCell = cells[li].match(SEC_LABEL_RE)[2].trim(); section = inCell || cells.slice(li + 1).find(c => c) || section; ended = false; continue; }
         const hdr = cells.map((c, i) => NAME_HDR_RE.test(c) ? i : -1).filter(i => i >= 0);
-        if (hdr.length) { nameCols = hdr; carryCols = hdr; carryWidth = cells.length; continue; }
+        if (hdr.length) { nameCols = hdr; carryCols = hdr; carryWidth = cells.length; ended = false; continue; }
+        if (cells.some(c => END_RE.test(c))) { ended = true; nameCols = null; carryCols = null; continue; }
+        if (ended) continue;
         if (!nameCols && carryCols && cells.length === carryWidth) nameCols = carryCols;           // continued table
         if (!nameCols) {                                                                          // table without a NAME header
           const guess = cells.map((c, i) => PERSON_RE.test(cleanName(c)) ? i : -1).filter(i => i >= 0);
@@ -628,9 +642,10 @@ async function readDocx(file) {
       for (const t of lines) {
         if (!t) continue;
         if (/\b(first|1st)\s+sem/i.test(t)) sem = '1'; else if (/\b(second|2nd)\s+sem/i.test(t)) sem = '2'; else if (/summer|mid-?year/i.test(t)) sem = 'S';
-        if (takeSection(t)) continue;
+        if (takeSection(t)) { ended = false; continue; }
+        if (END_RE.test(t)) { ended = true; carryCols = null; continue; }
         const n = cleanName(t);
-        if (PERSON_RE.test(n)) rows.push([n, section]);     // names written as plain lines, inside or outside a table
+        if (!ended && looksLikeName(n, false)) rows.push([n, section]);     // names written as plain lines
       }
     }
   }
@@ -672,17 +687,19 @@ async function pdfLines(file) {
   return out;
 }
 function parseLines(lines) {
-  const rows = [], skipped = []; let section = '', sem = '', inNames = false;
+  const rows = [], skipped = []; let section = '', sem = '', inNames = false, ended = false;
   for (const cells of lines) {
     const full = cells.join(' ');
     if (/\b(first|1st)\s+sem/i.test(full)) sem = sem || '1'; else if (/\b(second|2nd)\s+sem/i.test(full)) sem = sem || '2'; else if (/summer|mid-?year/i.test(full)) sem = sem || 'S';
     const m = full.match(SEC_LABEL_RE);
-    if (m) { section = m[2].trim() || section; inNames = false; continue; }
-    if (cells.some(c => NAME_HDR_RE.test(c)) || /^(no\.?\s+)?(full\s+)?names?(\s+(of\s+)?(students?|members?))?(\s+signature)?$/i.test(full)) { inNames = true; continue; }
+    if (m) { section = m[2].trim() || section; inNames = false; ended = false; continue; }
+    if (cells.some(c => END_RE.test(c)) || END_RE.test(full)) { ended = true; inNames = false; continue; }
+    if (cells.some(c => NAME_HDR_RE.test(c)) || /^(no\.?\s+)?(full\s+)?names?(\s+(of\s+)?(students?|members?))?(\s+signature)?$/i.test(full)) { inNames = true; ended = false; continue; }
+    if (ended) continue;
     const cands = [...cells.map(cleanName), cleanName(full)];
     const n = cands.find(c => looksLikeName(c, false)) || (inNames ? cands.find(c => looksLikeName(c, true)) : null);
     if (n) rows.push([n, section]);
-    else if (inNames && /\p{L}{2}/u.test(full) && !NOT_NAME_RE.test(full)) skipped.push(full);
+    else if (inNames && /\p{L}{2}/u.test(full) && !NOT_NAME_RE.test(full)) skipped.push([full, section]);
   }
   return { rows, sem, skipped };
 }
@@ -695,12 +712,15 @@ async function readPdfList(file) {
 
 async function loadDocs(files) {
   const all = [], perSec = new Map(), skipped = []; let sem = '', empty = [];
+  state.secStats = {};
+  const secStat = k => (state.secStats[k || '(no section)'] ||= { files: new Set(), skipped: [] });
   for (const f of files) {
     const r = /\.pdf$/i.test(f.name) ? await readPdfList(f) : await readDocx(f);
     if (!r.rows.length) empty.push(f.name + (r.scanned ? ' (scanned picture, no text to read)' : ''));
     for (const row of r.rows) { all.push(row); perSec.set(row[1] || '(no section)', (perSec.get(row[1] || '(no section)') || 0) + 1); }
     if (r.sem && !sem) sem = r.sem;
-    for (const t of r.skipped || []) skipped.push(`${t} (${f.name})`);
+    for (const [t, sec] of r.skipped || []) { skipped.push(`${t} (${f.name})`); secStat(sec).skipped.push(t); }
+    for (const row of r.rows) secStat(row[1]).files.add(f.name);
   }
   if (!all.length) { showResult(); dataStatus.textContent = 'No student names were found' + (empty.some(e => e.includes('scanned')) ? ': the PDF is a scanned picture. Use the Word file or a PDF exported from Word/Google Docs.' : '. The file needs a table with a NAME column (or lines like "DELA CRUZ, JUAN P.").'); dataStatus.className = 'status err'; return; }
   state.book = null; sheetPick.innerHTML = ''; sheetPickWrap.style.display = 'none';
@@ -736,6 +756,7 @@ async function handleFiles(files) {
       await loadDocs(docs); dataFile.value = ''; return;
     }
     if (files.length > 1) throw new Error('Only one Excel file at a time (several Word or PDF files are fine).');
+    state.secStats = {};
     const buf = await file.arrayBuffer();
     if (/\.xlsx$/i.test(file.name) && window.ExcelJS) {
       const wb = new ExcelJS.Workbook(); await wb.xlsx.load(buf);
@@ -821,6 +842,7 @@ function loadGrid(grid, bold) {
   renderPreview(); renderFieldTable(); renderQuick(); renderEditor(); updateRnExample(); updateNav(); persist();
 }
 sampleBtn.addEventListener('click', () => {
+  state.secStats = {};
   const g = [
     ['i-CONNECT MEMBERSHIP FEE FOR FIRST SEMESTER',''],
     ['Name','Course, Year & Section'],
@@ -832,13 +854,42 @@ sampleBtn.addEventListener('click', () => {
   const b = g.map((r, i) => r.map(() => i <= 1));
   loadGrid(g, b);
 });
+function renderCheck(per) {
+  if (!per.size) { secCheck.innerHTML = ''; return; }
+  const exp = state.expected || {};
+  let bad = 0;
+  const rows = [...per].map(([k, v]) => {
+    const st = (state.secStats || {})[k] || { files: new Set(), skipped: [] };
+    const e = exp[k];
+    let res = '<span class="small">type the count →</span>';
+    if (e !== undefined && e !== '') {
+      const d = v - (+e);
+      if (d === 0) res = '<span class="okc">✓ matches</span>';
+      else { bad++; res = `<span class="badc">⚠ ${Math.abs(d)} ${d < 0 ? 'missing' : 'extra'}</span>`; }
+    }
+    const sk = st.skipped.length ? `<tr class="skip"><td colspan="5">Not read as a name in ${esc(k)}: ${st.skipped.slice(0, 8).map(t => `“${esc(t)}”`).join(', ')}${st.skipped.length > 8 ? ', …' : ''}</td></tr>` : '';
+    return `<tr><td><b>${esc(k)}</b></td><td class="small">${esc([...st.files].join(', ') || '—')}</td><td class="num">${v}</td>
+      <td><input type="number" min="0" class="expin" data-sec="${esc(k)}" value="${e ?? ''}" placeholder="—"></td><td>${res}</td></tr>${sk}`;
+  }).join('');
+  secCheck.innerHTML = `<div class="check-head"><b>Section check</b><span class="small">Type the treasurer's number of students for each section to compare.</span>${bad ? `<span class="badc">${bad} section${bad === 1 ? '' : 's'} don't match</span>` : ''}</div>
+    <div class="table-wrap" style="max-height:none"><table class="list"><thead><tr><th>Section</th><th>File</th><th>Read</th><th>Expected</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+secCheck.addEventListener('input', e => {
+  const el = e.target; if (!el.classList.contains('expin')) return;
+  state.expected[el.dataset.sec] = el.value;
+  if (el.value === '') delete state.expected[el.dataset.sec];
+  try { localStorage.setItem('rmExpected', JSON.stringify(state.expected)); } catch (err) {}
+  const pos = el.selectionStart; const key = el.dataset.sec;
+  renderPreview();
+  const again = secCheck.querySelector(`.expin[data-sec="${CSS.escape(key)}"]`); if (again) { again.focus(); try { again.setSelectionRange(pos, pos); } catch (err) {} }
+});
 function renderPreview() {
   try { fillSecList(); } catch (e) {}
   const h = state.headers, n = state.rows.length;
   countTitle.textContent = n ? `${n} student${n === 1 ? '' : 's'} · ${Math.ceil(n / perSheet())} A4 sheet${Math.ceil(n / perSheet()) === 1 ? '' : 's'}` : 'No students';
   const secCol = h.find(x => /section|course|year/i.test(x));
   const per = new Map(); if (secCol) state.rows.forEach(r => per.set(r[secCol] || '(no section)', (per.get(r[secCol] || '(no section)') || 0) + 1));
-  secChips.innerHTML = [...per].map(([k, v]) => `<i>${esc(k)} · ${v}</i>`).join('');
+  renderCheck(per);
   const orOn = state.fields.some(f => f.src === 'auto' && f.enabled);
   dataPreview.style.display = n ? '' : 'none';
   const dateF = state.fields.find(f => f.slot === 'date' && f.enabled);
@@ -909,12 +960,13 @@ function sectionsInList() {
 function secModeOf(row) { const col = secColumn(); return col && state.secMode ? state.secMode[row[col]] || null : null; }
 function valueFor(f, row, idx = 0) {
   const sm = row && f.slot && /^(cash|gcash|ref)$/.test(f.slot) ? secModeOf(row) : null;
-  if (sm) {
+  if (sm && sm.mode) {
     if (f.slot === 'ref') return sm.mode === 'GCash' ? (sm.ref || '') : '';
     const g = sm.mode === 'GCash';
     return f.format === 'checkgcash' ? (g ? '✓' : '') : f.format === 'checkcash' ? (g ? '' : '✓') : sm.mode;
   }
   if (f.slot === 'date' && row && row.__date) return row.__date;
+  if (f.slot === 'date' && row) { const sd = secModeOf(row); if (sd && sd.date) return sd.date; }
   if (f.src === 'auto') return receiptNo(idx);
   let v = f.src === 'fixed' ? f.fixed : (row ? (row[f.col] ?? '') : '');
   if (f.format === 'money') return fmtMoney(v);
@@ -1116,7 +1168,7 @@ function renderQuick() {
   qDate.value = strToIso(val('date'));
   const own = state.rows.filter(r => r.__date).length;
   qDateNote.innerHTML = own ? `${own} student${own === 1 ? ' has' : 's have'} their own date (set in step 1). <button class="link" id="qDateAll" type="button">Use this date for everyone</button>`
-    : 'Used on every receipt. To give a student a different date, change it in their row in step 1.';
+    : 'Used unless a section below has its own date. For a single student, change the date in their row in step 1.';
   qFor.value = val('for'); qFor.placeholder = ph('for');
   const mode = /g-?cash/i.test(val('cash')) ? 'GCash' : 'Cash';
   document.querySelectorAll('input[name=qMode]').forEach(r => r.checked = r.value === mode);
@@ -1129,27 +1181,33 @@ function renderQuick() {
 }
 function renderModes(secs, def) {
   qModeSec.innerHTML = secs.map(([k, n]) => {
-    const sm = state.secMode[k] || { mode: def, ref: '' };
+    const sm = Object.assign({ mode: def, ref: '', date: '' }, state.secMode[k] || {}); if (!sm.mode) sm.mode = def;
     return `<div class="mrow"><span class="sec">${esc(k)}<small>${n} student${n === 1 ? '' : 's'}</small></span>
-      <div class="tog" data-sec="${esc(k)}"><button type="button" data-m="Cash" class="${sm.mode === 'Cash' ? 'on' : ''}">Cash</button><button type="button" data-m="GCash" class="${sm.mode === 'GCash' ? 'on' : ''}">GCash</button></div>
+      <div class="rowctl"><input type="date" class="secdate" data-sec="${esc(k)}" value="${strToIso(sm.date)}" title="Date received for ${esc(k)} (empty = default date)">
+      <div class="tog" data-sec="${esc(k)}"><button type="button" data-m="Cash" class="${sm.mode === 'Cash' ? 'on' : ''}">Cash</button><button type="button" data-m="GCash" class="${sm.mode === 'GCash' ? 'on' : ''}">GCash</button></div></div>
       ${sm.mode === 'GCash' ? `<input type="text" class="secref" data-sec="${esc(k)}" value="${esc(sm.ref || '')}" placeholder="GCash ref No. for ${esc(k)} (optional)">` : ''}</div>`;
   }).join('');
 }
 function modesChanged() { renderEditor(); renderPreview(); if (state.step === 3) generate(); }
 qModeSec.addEventListener('click', e => {
   const b = e.target.closest('.tog button'); if (!b) return;
-  const k = b.parentElement.dataset.sec, cur = state.secMode[k] || { ref: '' };
-  state.secMode[k] = { mode: b.dataset.m, ref: cur.ref || '' };
+  const k = b.parentElement.dataset.sec, cur = state.secMode[k] || {};
+  state.secMode[k] = Object.assign({}, cur, { mode: b.dataset.m });
   renderQuick(); modesChanged();
 });
 qModeSec.addEventListener('input', e => {
   if (!e.target.classList.contains('secref')) return;
-  const k = e.target.dataset.sec; state.secMode[k] = { mode: 'GCash', ref: e.target.value };
+  const k = e.target.dataset.sec; state.secMode[k] = Object.assign({}, state.secMode[k], { mode: 'GCash', ref: e.target.value });
+  modesChanged();
+});
+qModeSec.addEventListener('change', e => {
+  if (!e.target.classList.contains('secdate')) return;
+  const k = e.target.dataset.sec; state.secMode[k] = Object.assign({}, state.secMode[k], { date: isoToStr(e.target.value) });
   modesChanged();
 });
 qModeSecWrap.addEventListener('click', e => {
   const b = e.target.closest('[data-all]'); if (!b) return;
-  for (const [k] of sectionsInList()) state.secMode[k] = { mode: b.dataset.all, ref: (state.secMode[k] || {}).ref || '' };
+  for (const [k] of sectionsInList()) state.secMode[k] = Object.assign({}, state.secMode[k], { mode: b.dataset.all });
   renderQuick(); modesChanged();
 });
 function quickChanged() { renderFieldTable(); renderEditor(); persist(); if (state.step === 3) generate(); }
