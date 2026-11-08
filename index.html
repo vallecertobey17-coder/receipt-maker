@@ -417,8 +417,8 @@ let nextId = 1;
 /* ---------- fields ---------- */
 // Built-in I-CONNECT official receipt: where each line is, in mm from the top-left corner.
 const SLOTS = [
-  { slot:'or',      label:'OR NO.',            src:'auto',  x:74.0, y:4.6, w:10.8, size:6.5,  bold:true, align:'center', sample:'' },
-  { slot:'date',    label:'DATE',              match:/date|petsa/i, notMatch:/ref/i, fixed:() => todayStr(), x:74.0, y:7.1, w:10.8, size:6.5, align:'center', sample:'' },
+  { slot:'or',      label:'OR NO.',            src:'auto',  x:74.6, y:4.9, w:9.6, size:5.5,  bold:true, align:'center', sample:'' },
+  { slot:'date',    label:'DATE',              match:/date|petsa/i, notMatch:/ref/i, fixed:() => todayStr(), x:74.6, y:7.5, w:9.6, size:5.5, align:'center', sample:'' },
   { slot:'from',    label:'RECEIVED FROM',     match:/name|pangalan|received from/i, x:24.2, y:20.0, w:60.1, size:8.5, bold:true, sample:'Dela Cruz, Juan P.' },
   { slot:'yrsec',   label:'COURSE, YEAR & SECTION', match:/year|section|course|program|block|\byr\b/i, notMatch:/date|school year/i, x:33.2, y:24.7, w:51.3, size:8.5, sample:'BSIT 1-2' },
   { slot:'words',   label:'AMOUNT IN WORDS',   fixed:'35', format:'words',  x:27.4, y:30.3, w:57.2, size:7, sample:'150' },
@@ -478,13 +478,17 @@ function syncFieldsToHeaders() {
 function layoutObj() {
   return { fields: state.fields, rnYear: rnYear.value, rnSem: rnSem.value, rnStart: rnStart.value, rnDigits: rnDigits.value,
            amtPrefix: amtPrefix.value, amtDecimals: amtDecimals.checked,
-           fontFamily: fontFamily.value, fontColor: fontColor.value, orient: orient.value, scale: qScale.value,
+           fontFamily: fontFamily.value, fontColor: fontColor.value, orient: orient.value, scale: qScale.value, tplVer: 2,
            offX: offX.value, offY: offY.value, gap: gap.value, showBg: showBg.checked, cutLines: cutLines.checked };
 }
 function applyLayout(o) {
   if (!o) return;
   if (Array.isArray(o.fields)) {
     state.fields = o.fields.map(f => Object.assign(newField({}), f, { id: 'f' + (nextId++) }));
+    if ((o.tplVer || 1) < 2) for (const f of state.fields) {   // OR No. / DATE now sit inside their boxes
+      const d = f.slot && slotDef(f);
+      if (d && (d.slot === 'or' || d.slot === 'date')) Object.assign(f, { x:d.x, y:d.y, w:d.w, size:d.size });
+    }
     syncFieldsToHeaders();
   }
   const set = (el, v) => { if (v !== undefined) { if (el.type === 'checkbox') el.checked = v; else el.value = v; } };
