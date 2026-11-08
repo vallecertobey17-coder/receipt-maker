@@ -111,6 +111,20 @@
   .orbar-in label.f { margin-bottom:0; }
   #s1First { color:var(--text); font-weight:600; }
   @media (max-width: 700px) { .orbar-in { grid-template-columns:1fr 1fr; } }
+  button.link.jump { color:var(--text); text-decoration:none; }
+  button.link.jump:hover { color:var(--accent); text-decoration:underline; }
+  details.secgroup { scroll-margin-top:90px; }
+  .grp-tools { display:flex; gap:14px; justify-content:flex-end; margin:14px 0 6px; }
+  details.secgroup { border:1px solid var(--line); border-radius:12px; margin-top:12px; background:var(--surface); overflow:hidden; }
+  details.secgroup > summary { list-style:none; cursor:pointer; display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; padding:12px 14px; background:var(--surface2); }
+  details.secgroup > summary::-webkit-details-marker { display:none; }
+  details.secgroup > summary::before { content:'▸'; color:var(--muted); transition:.15s; }
+  details.secgroup[open] > summary::before { transform:rotate(90deg); }
+  details.secgroup[open] > summary { border-bottom:1px solid var(--line); }
+  .g-name { font-weight:600; font-size:15px; }
+  .g-count { font-size:13px; padding:2px 10px; border-radius:999px; background:var(--surface); border:1px solid var(--line); }
+  .g-meta { margin-left:auto; font-size:12px; color:var(--muted); }
+  .g-wrap { border:0; border-radius:0; margin:0; max-height:none; }
   .add-row { display:grid; grid-template-columns:2fr 1fr auto; gap:8px; margin-top:12px; }
   @media (max-width: 700px) { .add-row { grid-template-columns:1fr; } }
   .x { border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:14px; padding:2px 6px; border-radius:6px; }
@@ -297,7 +311,7 @@
       </div>
       <div id="dataStatus" class="status">No list yet</div>
       <div id="secCheck"></div>
-      <div class="table-wrap" id="dataPreview"></div>
+      <div id="dataPreview"></div>
       <form class="add-row" id="addForm" autocomplete="off">
         <input type="text" id="addName" placeholder="Add a missing student: SURNAME, FIRST M.">
         <input type="text" id="addSec" list="secList" placeholder="Section, e.g. BSIT 2-2">
@@ -887,7 +901,7 @@ function renderCheck(per) {
   const rows = [...per].map(([k, v]) => {
     const st = (state.secStats || {})[k] || { files: new Set(), skipped: [] };
     const sk = st.skipped.length ? `<tr class="skip"><td colspan="5">Not read as a name in ${esc(k)}: ${st.skipped.slice(0, 8).map(t => `“${esc(t)}”`).join(', ')}${st.skipped.length > 8 ? ', …' : ''}</td></tr>` : '';
-    return `<tr data-sec="${esc(k)}"><td><b>${esc(k)}</b></td><td class="small">${esc([...st.files].join(', ') || '—')}</td><td class="num">${v}</td>
+    return `<tr data-sec="${esc(k)}"><td><button class="link jump" type="button" data-jump="${esc(k)}" title="Show this section's students"><b>${esc(k)}</b></button></td><td class="small">${esc([...st.files].join(', ') || '—')}</td><td class="num">${v}</td>
       <td><input type="text" inputmode="numeric" autocomplete="off" class="expin" data-sec="${esc(k)}" data-read="${v}" value="${esc(exp[k] ?? '')}" placeholder="—"></td><td class="res">${checkResult(v, exp[k])}</td></tr>${sk}`;
   }).join('');
   secCheck.innerHTML = `<div class="check-head"><b>Section check</b><span class="small">Type the treasurer's count for each section (Enter = next), or paste the whole tracking sheet.</span><span id="checkSum">${checkSummary()}</span></div>
@@ -906,6 +920,7 @@ secCheck.addEventListener('input', e => {
   saveExpected();
   el.closest('tr').querySelector('.res').innerHTML = checkResult(+el.dataset.read, state.expected[el.dataset.sec]);
   const sum = document.getElementById('checkSum'); if (sum) sum.innerHTML = checkSummary();
+  const gr = dataPreview.querySelector(`.grp-res[data-sec="${CSS.escape(el.dataset.sec)}"]`); if (gr) gr.innerHTML = checkResult(+el.dataset.read, state.expected[el.dataset.sec]);
 });
 secCheck.addEventListener('keydown', e => {
   if (e.key !== 'Enter' || !e.target.classList.contains('expin')) return;
@@ -936,6 +951,8 @@ function parseTracking(text) {
 }
 const secKey = t => String(t).toUpperCase().replace(/[^A-Z0-9]/g, '');
 secCheck.addEventListener('click', e => {
+  const j = e.target.closest('[data-jump]');
+  if (j) { const d = dataPreview.querySelector(`details.secgroup[data-sec="${CSS.escape(j.dataset.jump)}"]`); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); } return; }
   if (e.target.id !== 'pasteApply') return;
   const items = parseTracking(document.getElementById('pasteBox').value);
   const msg = document.getElementById('pasteMsg');
@@ -971,9 +988,26 @@ function renderPreview() {
   const dateCell = (r, i) => { if (!dateF) return ''; const own = !!r.__date;
     const v = strToIso(own ? r.__date : valueFor(dateF, r, i));
     return `<td><input type="date" class="rowdate${own ? ' own' : ''}" data-i="${i}" value="${v}" title="${own ? 'Own date for this student' : 'Uses the default date from step 2'}"></td>`; };
-  dataPreview.innerHTML = !n ? '' : `<table class="list"><thead><tr><th>#</th>${orOn ? '<th>OR No.</th>' : ''}${h.map(x => `<th>${esc(x)}</th>`).join('')}${dateF ? '<th>Date received</th>' : ''}${gF ? '<th>Mode</th>' : ''}<th></th></tr></thead><tbody>` +
-    state.rows.map((r, i) => `<tr><td class="num">${i + 1}</td>${orOn ? `<td class="or">${esc(receiptNo(i))}</td>` : ''}${h.map(x => `<td>${esc(r[x])}</td>`).join('')}${dateCell(r, i)}${gF ? `<td class="num">${valueFor(gF, r, i) === '✓' ? 'GCash' : 'Cash'}</td>` : ''}<td><button class="x" data-rm="${i}" title="Remove">✕</button></td></tr>`).join('') +
-    '</tbody></table>';
+  // one table per section, numbered 1, 2, 3… like the original membership form
+  const groups = new Map();
+  state.rows.forEach((r, i) => { const k = secCol ? (r[secCol] || '(no section)') : 'Students'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); });
+  const cols = h.filter(x => x !== secCol);
+  const st = state.secStats || {};
+  dataPreview.innerHTML = !n ? '' : (groups.size > 1 ? `<div class="grp-tools"><button class="link" type="button" data-grp="open">Expand all</button><button class="link" type="button" data-grp="close">Collapse all</button></div>` : '') +
+    [...groups].map(([k, idx]) => {
+      const e = state.expected[k], files = st[k] ? [...st[k].files].join(', ') : '';
+      const first = idx[0], last = idx[idx.length - 1];
+      return `<details class="secgroup" open data-sec="${esc(k)}"><summary>
+        <span class="g-name">${esc(k)}</span><span class="g-count">${idx.length} student${idx.length === 1 ? '' : 's'}</span>
+        ${e !== undefined && e !== '' ? `<span class="small">expected ${esc(e)}</span>` : ''}<span class="grp-res" data-sec="${esc(k)}">${checkResult(idx.length, e)}</span>
+        <span class="g-meta">${orOn ? `OR ${esc(receiptNo(first))} – ${esc(receiptNo(last).split('-').pop())}` : ''}${files ? ` · ${esc(files)}` : ''}</span></summary>
+        <div class="table-wrap g-wrap"><table class="list"><thead><tr><th>#</th>${orOn ? '<th>OR No.</th>' : ''}${cols.map(x => `<th>${esc(x)}</th>`).join('')}${dateF ? '<th>Date received</th>' : ''}${gF ? '<th>Mode</th>' : ''}<th></th></tr></thead><tbody>` +
+        idx.map((i, j) => { const r = state.rows[i];
+          return `<tr><td class="num">${j + 1}</td>${orOn ? `<td class="or">${esc(receiptNo(i))}</td>` : ''}${cols.map(x => `<td>${esc(r[x])}</td>`).join('')}${dateCell(r, i)}${gF ? `<td class="num">${valueFor(gF, r, i) === '✓' ? 'GCash' : 'Cash'}</td>` : ''}<td><button class="x" data-rm="${i}" title="Remove">✕</button></td></tr>`; }).join('') +
+        '</tbody></table></div></details>';
+    }).join('');
+  // keep sections the user collapsed closed after a refresh of the list
+  for (const d of dataPreview.querySelectorAll('details.secgroup')) if ((state.closedSecs || new Set()).has(d.dataset.sec)) d.open = false;
 }
 function fillSecList() { secList.innerHTML = sectionsInList().map(([k]) => `<option value="${esc(k)}">`).join(''); }
 addForm.addEventListener('submit', e => {
@@ -998,7 +1032,14 @@ dataPreview.addEventListener('change', e => {
   el.classList.toggle('own', !!r.__date);
   renderQuick(); renderEditor(); if (state.step === 3) generate();
 });
+dataPreview.addEventListener('toggle', e => {
+  const d = e.target; if (!d.classList || !d.classList.contains('secgroup')) return;
+  state.closedSecs = state.closedSecs || new Set();
+  if (d.open) state.closedSecs.delete(d.dataset.sec); else state.closedSecs.add(d.dataset.sec);
+}, true);
 dataPreview.addEventListener('click', e => {
+  const g = e.target.closest('[data-grp]');
+  if (g) { dataPreview.querySelectorAll('details.secgroup').forEach(d => d.open = g.dataset.grp === 'open'); return; }
   const b = e.target.closest('[data-rm]'); if (!b) return;
   state.rows.splice(+b.dataset.rm, 1);
   state.pv = Math.min(state.pv, Math.max(0, state.rows.length - 1));
