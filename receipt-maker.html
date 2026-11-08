@@ -8,6 +8,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.8.0/mammoth.browser.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script>try { const t = localStorage.getItem('rmTheme'); if (t) document.documentElement.dataset.theme = t; } catch(e) {}</script>
@@ -358,10 +359,11 @@
     </div>
     <div class="card">
       <div class="actions">
-        <button class="btn primary big" id="printBtn" type="button" disabled>🖨 Print / Save as PDF</button>
+        <button class="btn primary big" id="pdfBtn" type="button" disabled>⬇ Save as PDF</button>
+        <button class="btn" id="printBtn" type="button" disabled>🖨 Print directly</button>
         <button class="btn" id="exportList" type="button" disabled>Download list with OR numbers (.xlsx)</button>
       </div>
-      <p class="tip">In the print window choose <b>A4</b>, scale <b>100% / Actual size</b> (not "Fit to page") and margins <b>None</b>.</p>
+      <p class="tip" id="pdfStatus">Saves an A4 PDF file to your Downloads. When you print that PDF later, choose scale <b>100% / Actual size</b> (not "Fit to page").</p>
       <details class="adv" style="box-shadow:none">
         <summary>Printer settings <small>(if the print comes out shifted)</small></summary>
         <div class="adv-body">
@@ -382,7 +384,7 @@
       </details>
     </div>
     <div class="card after" id="afterCard">
-      <h3>Did everything print correctly?</h3>
+      <h3>Is the PDF (or print) correct?</h3>
       <p class="small" style="margin-top:0">Confirming saves where the OR numbers stopped, so the next batch continues from there, and clears this list from the page.</p>
       <div class="actions">
         <button class="btn primary" id="markUsed" type="button">Yes, finish this batch</button>
@@ -1077,7 +1079,7 @@ function perSheet() { const g = grid(); return g.cols * g.rows; }
 function generate() {
   if (!state.rows.length) {
     genStatus.textContent = 'Add students in step 1 first.'; sheets.innerHTML = '';
-    printBtn.disabled = true; exportList.disabled = true; sumCount.textContent = '0'; sumSheets.textContent = '0'; sumRange.textContent = '–';
+    printBtn.disabled = true; pdfBtn.disabled = true; exportList.disabled = true; sumCount.textContent = '0'; sumSheets.textContent = '0'; sumRange.textContent = '–';
     return;
   }
   const shown = state.fields.filter(f => f.enabled);
@@ -1115,7 +1117,7 @@ function generate() {
   }
   const fit = () => sheets.querySelectorAll('.rf').forEach(el => { el.firstChild.style.fontSize = el.style.fontSize; fitText(el.firstChild, el); });
   requestAnimationFrame(fit); if (document.fonts) document.fonts.ready.then(fit);
-  printBtn.disabled = false;
+  printBtn.disabled = false; pdfBtn.disabled = false;
   const auto = state.fields.find(f => f.src === 'auto' && f.enabled);
   genStatus.textContent = 'Check the sheets below, then print.';
   sumCount.textContent = state.rows.length; sumSheets.textContent = total;
@@ -1123,6 +1125,61 @@ function generate() {
   markUsed.disabled = false; exportList.disabled = false;
 }
 printBtn.addEventListener('click', () => { window.print(); afterCard.classList.add('show'); usedStatus.textContent = ''; });
+
+/* ---------- Save as PDF (drawn at 300 dpi, downloaded directly) ---------- */
+const loadImg = src => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+function drawField(ctx, f, text, ox, oy, D) {
+  if (!text) return;
+  const fam = fontFamily.value, wt = f.bold ? 700 : 400;
+  let fs = effSize(f) * PT_TO_MM * D; const h = fs * 1.25;          // same box as on screen
+  const x = ox + f.x * D, top = oy + topOf(f) * D, w = f.w * D;
+  ctx.font = `${wt} ${fs}px ${fam}`;
+  let tw = ctx.measureText(text).width, guard = 40;
+  while (tw > w && guard-- > 0) { fs *= 0.94; ctx.font = `${wt} ${fs}px ${fam}`; tw = ctx.measureText(text).width; }
+  const m = ctx.measureText(text);
+  const asc = m.fontBoundingBoxAscent ?? fs * 0.85, desc = m.fontBoundingBoxDescent ?? fs * 0.25;
+  const baseline = top + (h - fs) / 2 + (fs - (asc + desc)) / 2 + asc;
+  const tx = f.align === 'center' ? x + (w - tw) / 2 : f.align === 'right' ? x + w - tw : x;
+  ctx.fillStyle = fontColor.value; ctx.textBaseline = 'alphabetic';
+  ctx.fillText(text, tx, baseline);
+}
+async function savePdf() {
+  if (!state.rows.length) return;
+  if (!window.jspdf) { pdfStatus.textContent = 'The PDF maker could not load. Check the internet connection and refresh.'; pdfStatus.className = 'tip status err'; return; }
+  pdfBtn.disabled = true; const label = pdfBtn.textContent;
+  try {
+    const G = grid(), per = G.cols * G.rows, total = Math.ceil(state.rows.length / per), D = 300 / 25.4;
+    const shown = state.fields.filter(f => f.enabled), fam = fontFamily.value;
+    try { await Promise.all([document.fonts.load(`400 40px ${fam}`), document.fonts.load(`700 40px ${fam}`)]); } catch (e) {}
+    const img = showBg.checked && state.tplData ? await loadImg(state.tplData) : null;
+    const pdf = new jspdf.jsPDF({ orientation: orient.value, unit: 'mm', format: 'a4', compress: true });
+    const cv = document.createElement('canvas'); cv.width = Math.round(G.PW * D); cv.height = Math.round(G.PH * D);
+    const ctx = cv.getContext('2d');
+    for (let p = 0; p < total; p++) {
+      pdfBtn.textContent = `Making PDF… sheet ${p + 1} of ${total}`;
+      await new Promise(r => setTimeout(r, 0));
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+      for (let i = 0; i < per; i++) {
+        const idx = p * per + i, row = state.rows[idx]; if (!row) break;
+        const r = Math.floor(i / G.cols), c = i % G.cols;
+        const ox = (G.mx + c * (RW + G.gap)) * D, oy = (G.my + r * (RH + G.gap)) * D;
+        if (img) ctx.drawImage(img, ox, oy, RW * D, RH * D);
+        if (cutLines.checked) { ctx.save(); ctx.setLineDash([2 * D, 1.5 * D]); ctx.strokeStyle = '#888'; ctx.lineWidth = 0.2 * D; ctx.strokeRect(ox, oy, RW * D, RH * D); ctx.restore(); }
+        for (const f of shown) drawField(ctx, f, valueFor(f, row, idx), ox, oy, D);
+      }
+      if (p > 0) pdf.addPage('a4', orient.value);
+      pdf.addImage(cv.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, G.PW, G.PH, undefined, 'FAST');
+    }
+    const auto = state.fields.find(f => f.src === 'auto' && f.enabled);
+    const name = auto ? `receipts-${receiptNo(0)}-to-${receiptNo(state.rows.length - 1).split('-').pop()}.pdf` : 'receipts.pdf';
+    pdf.save(name);
+    pdfStatus.innerHTML = `Saved <b>${esc(name)}</b> to your Downloads. When you print it, choose scale <b>100% / Actual size</b>.`; pdfStatus.className = 'tip';
+    afterCard.classList.add('show'); usedStatus.textContent = '';
+  } catch (err) {
+    pdfStatus.textContent = 'Could not make the PDF: ' + err.message; pdfStatus.className = 'tip status err';
+  } finally { pdfBtn.textContent = label; pdfBtn.disabled = false; }
+}
+pdfBtn.addEventListener('click', savePdf);
 markUsed.addEventListener('click', () => {
   const next = (parseInt(rnStart.value) || 1) + state.rows.length;
   rnStart.value = next; persist();
