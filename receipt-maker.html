@@ -97,6 +97,8 @@
   table.list td.num, table.list td.or { color:var(--muted); font-variant-numeric:tabular-nums; }
   table.list input[type=date] { width:auto; padding:4px 8px; font-size:12px; border-radius:7px; }
   table.list input.own { border-color:var(--accent); }
+  .add-row { display:grid; grid-template-columns:2fr 1fr auto; gap:8px; margin-top:12px; }
+  @media (max-width: 700px) { .add-row { grid-template-columns:1fr; } }
   .x { border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:14px; padding:2px 6px; border-radius:6px; }
   .x:hover { color:var(--err); background:color-mix(in srgb, var(--err) 12%, transparent); }
 
@@ -272,6 +274,12 @@
       <div id="dataStatus" class="status">No list yet</div>
       <div class="sec-chips" id="secChips"></div>
       <div class="table-wrap" id="dataPreview"></div>
+      <form class="add-row" id="addForm" autocomplete="off">
+        <input type="text" id="addName" placeholder="Add a missing student: SURNAME, FIRST M.">
+        <input type="text" id="addSec" list="secList" placeholder="Section, e.g. BSIT 2-2">
+        <datalist id="secList"></datalist>
+        <button class="btn" type="submit">+ Add student</button>
+      </form>
       <p class="small" style="margin:8px 0 0">Students get OR numbers in this order. Change <b>Date received</b> for anyone who paid on a different day (highlighted dates differ from the default in step 2). Click ✕ to remove a student who hasn't paid.</p>
     </div>
   </section>
@@ -574,28 +582,46 @@ const normTxt = el => el.textContent.replace(/\s+/g, ' ').trim();
 const cleanName = t => t.replace(/^\d+\s*[.)-]?\s+/, '').replace(/\s+/g, ' ').trim();
 const SEC_LABEL_RE = /^(course|year|section|yr|program)\b[^:]*:\s*(.*)$/i;
 const NAME_HDR_RE = /^(full\s*)?names?$|^name of (the )?(students?|members?)$|^students?'?s? names?$|^(student|member) names?$/i;
-const PERSON_RE = /^[A-ZÑÁÉÍÓÚ][A-Za-zÑñÁÉÍÓÚáéíóú.'\- ]+,\s*[A-Za-zÑñÁÉÍÓÚáéíóú.'\- ]+$/;
+// "SURNAME, FIRST M." with any letters (Ñ, Ü, É…), curly apostrophes and suffixes like ", JR."
+const PERSON_RE = /^\p{L}[\p{L}\p{M}.'’`\- ]*,\s*\p{L}[\p{L}\p{M}.'’`\-, ]*$/u;
+// a name written without a comma, e.g. "JUAN P. DELA CRUZ" (only trusted inside a NAME column)
+const NAME_LIKE = /^\p{L}[\p{L}\p{M}.'’`\- ]*\s\p{L}[\p{L}\p{M}.'’`\-, ]*$/u;
+const NOT_NAME_RE = /signature|prepared by|noted by|approved by|checked by|certified|^total\b|^page\s*\d|^no\.?$|^names?\b/i;
+const looksLikeName = (t, inNameColumn) => !!t && !NOT_NAME_RE.test(t) && (PERSON_RE.test(t) || (inNameColumn && NAME_LIKE.test(t)));
 async function readDocx(file) {
   if (!window.mammoth) throw new Error('The Word document reader could not load. Check the internet connection.');
   const { value } = await mammoth.convertToHtml({ arrayBuffer: await file.arrayBuffer() });
   const body = new DOMParser().parseFromString(value, 'text/html').body;
-  const rows = [], loose = []; let section = '', sem = '';
+  const rows = [], skipped = []; let section = '', sem = '';
+  let carryCols = null, carryWidth = 0;       // a NAME table that continues as a new table (e.g. on page 2)
   const takeSection = t => { const m = t.match(SEC_LABEL_RE); if (m && m[2].trim()) { section = m[2].trim(); return true; } return !!m; };
+  const pushCell = (td, strict) => {
+    // one cell can hold several names on separate lines
+    const parts = [...td.querySelectorAll('p')].map(normTxt).filter(Boolean);
+    const list = parts.length > 1 && parts.every(t => looksLikeName(cleanName(t), true)) ? parts : [normTxt(td)];
+    for (const t of list) {
+      const n = cleanName(t);
+      if (!n || NAME_HDR_RE.test(n)) continue;
+      if (looksLikeName(n, true) || (!strict && /\p{L}/u.test(n) && !/\d{3,}/.test(n) && !NOT_NAME_RE.test(n))) rows.push([n, section]);
+      else skipped.push(n);
+    }
+  };
   for (const el of body.children) {
     if (el.tagName === 'TABLE') {
-      let nameCol = -1;
+      let nameCols = null;
       for (const tr of el.querySelectorAll('tr')) {
-        const cells = [...tr.children].map(normTxt);
-        if (nameCol < 0) {
-          // "COURSE, YEAR, & SECTION:" | "BSIT 1-2"   (or both in one cell)
-          const li = cells.findIndex(c => SEC_LABEL_RE.test(c));
-          if (li >= 0) { const inCell = cells[li].match(SEC_LABEL_RE)[2].trim(); section = inCell || cells.slice(li + 1).find(c => c) || section; continue; }
-          const ni = cells.findIndex(c => NAME_HDR_RE.test(c));
-          if (ni >= 0) { nameCol = ni; continue; }
-          continue;
+        const tds = [...tr.children], cells = tds.map(normTxt);
+        if (!cells.some(Boolean)) continue;
+        const li = cells.findIndex(c => SEC_LABEL_RE.test(c));
+        if (li >= 0) { const inCell = cells[li].match(SEC_LABEL_RE)[2].trim(); section = inCell || cells.slice(li + 1).find(c => c) || section; continue; }
+        const hdr = cells.map((c, i) => NAME_HDR_RE.test(c) ? i : -1).filter(i => i >= 0);
+        if (hdr.length) { nameCols = hdr; carryCols = hdr; carryWidth = cells.length; continue; }
+        if (!nameCols && carryCols && cells.length === carryWidth) nameCols = carryCols;           // continued table
+        if (!nameCols) {                                                                          // table without a NAME header
+          const guess = cells.map((c, i) => PERSON_RE.test(cleanName(c)) ? i : -1).filter(i => i >= 0);
+          if (guess.length) { nameCols = guess; carryCols = guess; carryWidth = cells.length; } else continue;
         }
-        const n = cleanName(cells[nameCol] || '');
-        if (n && !NAME_HDR_RE.test(n)) rows.push([n, section]);
+        for (const c of nameCols) if (tds[c]) pushCell(tds[c], false);
       }
     } else {
       const lines = el.tagName === 'UL' || el.tagName === 'OL' ? [...el.querySelectorAll('li')].map(normTxt) : [normTxt(el)];
@@ -604,11 +630,11 @@ async function readDocx(file) {
         if (/\b(first|1st)\s+sem/i.test(t)) sem = '1'; else if (/\b(second|2nd)\s+sem/i.test(t)) sem = '2'; else if (/summer|mid-?year/i.test(t)) sem = 'S';
         if (takeSection(t)) continue;
         const n = cleanName(t);
-        if (PERSON_RE.test(n)) loose.push([n, section]);     // "SURNAME, FIRST M." written as plain lines
+        if (PERSON_RE.test(n)) rows.push([n, section]);     // names written as plain lines, inside or outside a table
       }
     }
   }
-  return { rows: rows.length ? rows : loose, sem };
+  return { rows, sem, skipped };
 }
 /* ---------- PDF lists ---------- */
 async function pdfLines(file) {
@@ -646,17 +672,19 @@ async function pdfLines(file) {
   return out;
 }
 function parseLines(lines) {
-  const rows = []; let section = '', sem = '';
+  const rows = [], skipped = []; let section = '', sem = '', inNames = false;
   for (const cells of lines) {
     const full = cells.join(' ');
     if (/\b(first|1st)\s+sem/i.test(full)) sem = sem || '1'; else if (/\b(second|2nd)\s+sem/i.test(full)) sem = sem || '2'; else if (/summer|mid-?year/i.test(full)) sem = sem || 'S';
     const m = full.match(SEC_LABEL_RE);
-    if (m) { section = m[2].trim() || section; continue; }
-    if (cells.some(c => NAME_HDR_RE.test(c))) continue;
-    const n = cells.map(cleanName).find(c => PERSON_RE.test(c));
+    if (m) { section = m[2].trim() || section; inNames = false; continue; }
+    if (cells.some(c => NAME_HDR_RE.test(c)) || /^(no\.?\s+)?(full\s+)?names?(\s+(of\s+)?(students?|members?))?(\s+signature)?$/i.test(full)) { inNames = true; continue; }
+    const cands = [...cells.map(cleanName), cleanName(full)];
+    const n = cands.find(c => looksLikeName(c, false)) || (inNames ? cands.find(c => looksLikeName(c, true)) : null);
     if (n) rows.push([n, section]);
+    else if (inNames && /\p{L}{2}/u.test(full) && !NOT_NAME_RE.test(full)) skipped.push(full);
   }
-  return { rows, sem };
+  return { rows, sem, skipped };
 }
 async function readPdfList(file) {
   const lines = await pdfLines(file);
@@ -666,21 +694,28 @@ async function readPdfList(file) {
 }
 
 async function loadDocs(files) {
-  const all = [], perSec = new Map(); let sem = '', empty = [];
+  const all = [], perSec = new Map(), skipped = []; let sem = '', empty = [];
   for (const f of files) {
     const r = /\.pdf$/i.test(f.name) ? await readPdfList(f) : await readDocx(f);
     if (!r.rows.length) empty.push(f.name + (r.scanned ? ' (scanned picture, no text to read)' : ''));
     for (const row of r.rows) { all.push(row); perSec.set(row[1] || '(no section)', (perSec.get(row[1] || '(no section)') || 0) + 1); }
     if (r.sem && !sem) sem = r.sem;
+    for (const t of r.skipped || []) skipped.push(`${t} (${f.name})`);
   }
   if (!all.length) { showResult(); dataStatus.textContent = 'No student names were found' + (empty.some(e => e.includes('scanned')) ? ': the PDF is a scanned picture. Use the Word file or a PDF exported from Word/Google Docs.' : '. The file needs a table with a NAME column (or lines like "DELA CRUZ, JUAN P.").'); dataStatus.className = 'status err'; return; }
   state.book = null; sheetPick.innerHTML = ''; sheetPickWrap.style.display = 'none';
   const grid = [['Name', SEC_HDR], ...all], bold = grid.map((r, i) => r.map(() => i === 0));
   loadGrid(grid, bold);
   if (sem) { rnSem.value = sem; updateRnExample(); renderPreview(); renderEditor(); persist(); }
-  dataStatus.textContent = `Read ${files.length} file(s).` + (sem ? ` Semester detected: ${rnSem.options[rnSem.selectedIndex]?.text || sem}.` : '') +
-    (empty.length ? ` No names found in: ${empty.join(', ')}.` : '') + (perSec.has('(no section)') ? ' Some students have no section: check the COURSE, YEAR, & SECTION box.' : '');
-  dataStatus.className = empty.length || perSec.has('(no section)') ? 'status err' : 'status ok';
+  const seen = new Map(), dups = [];
+  for (const [n, sec] of all) { const k = (n + '|' + sec).toUpperCase(); seen.set(k, (seen.get(k) || 0) + 1); if (seen.get(k) === 2) dups.push(n); }
+  const warn = [];
+  if (empty.length) warn.push(`No names found in: ${empty.join(', ')}.`);
+  if (perSec.has('(no section)')) warn.push('Some students have no section: check the COURSE, YEAR, & SECTION box.');
+  if (skipped.length) warn.push(`${skipped.length} line${skipped.length === 1 ? ' was' : 's were'} not read as a name: ${skipped.slice(0, 6).map(t => `"${t}"`).join(', ')}${skipped.length > 6 ? ', …' : ''}. Add any missing student below.`);
+  if (dups.length) warn.push(`Listed twice: ${dups.slice(0, 6).join(', ')}${dups.length > 6 ? ', …' : ''}. Remove the extra with ✕ if it's a mistake.`);
+  dataStatus.textContent = `Read ${files.length} file(s).` + (sem ? ` Semester detected: ${rnSem.options[rnSem.selectedIndex]?.text || sem}.` : '') + (warn.length ? ' ' + warn.join(' ') : '');
+  dataStatus.className = warn.length ? 'status err' : 'status ok';
 }
 
 /* ---------- student list ---------- */
@@ -798,6 +833,7 @@ sampleBtn.addEventListener('click', () => {
   loadGrid(g, b);
 });
 function renderPreview() {
+  try { fillSecList(); } catch (e) {}
   const h = state.headers, n = state.rows.length;
   countTitle.textContent = n ? `${n} student${n === 1 ? '' : 's'} · ${Math.ceil(n / perSheet())} A4 sheet${Math.ceil(n / perSheet()) === 1 ? '' : 's'}` : 'No students';
   const secCol = h.find(x => /section|course|year/i.test(x));
@@ -814,6 +850,21 @@ function renderPreview() {
     state.rows.map((r, i) => `<tr><td class="num">${i + 1}</td>${orOn ? `<td class="or">${esc(receiptNo(i))}</td>` : ''}${h.map(x => `<td>${esc(r[x])}</td>`).join('')}${dateCell(r, i)}${gF ? `<td class="num">${valueFor(gF, r, i) === '✓' ? 'GCash' : 'Cash'}</td>` : ''}<td><button class="x" data-rm="${i}" title="Remove">✕</button></td></tr>`).join('') +
     '</tbody></table>';
 }
+function fillSecList() { secList.innerHTML = sectionsInList().map(([k]) => `<option value="${esc(k)}">`).join(''); }
+addForm.addEventListener('submit', e => {
+  e.preventDefault();
+  const name = cleanName(addName.value), sec = addSec.value.trim();
+  if (!name) { addName.focus(); return; }
+  if (!state.headers.length) { state.headers = ['Name', SEC_HDR]; state.rows = []; state.secMode = {}; syncFieldsToHeaders(); renderFieldTable(); }
+  const nameCol = state.headers.find(h => /name/i.test(h)) || state.headers[0], col = secColumn();
+  const row = {}; state.headers.forEach(h => row[h] = ''); row[nameCol] = name; if (col) row[col] = sec;
+  // put the new student after the last one from the same section
+  let at = state.rows.length; if (col && sec) { const last = state.rows.map(r => r[col]).lastIndexOf(sec); if (last >= 0) at = last + 1; }
+  state.rows.splice(at, 0, row);
+  addName.value = ''; addName.focus(); showResult();
+  dataStatus.textContent = `Added ${name}${sec ? ' to ' + sec : ''}.`; dataStatus.className = 'status ok';
+  renderPreview(); renderQuick(); renderEditor(); updateRnExample(); updateNav();
+});
 dataPreview.addEventListener('change', e => {
   const el = e.target; if (!el.classList || !el.classList.contains('rowdate')) return;
   const r = state.rows[+el.dataset.i]; if (!r) return;
