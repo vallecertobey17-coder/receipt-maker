@@ -125,6 +125,22 @@
 
   /* receipt preview */
   .pv-wrap { overflow:auto; }
+  .pv-stage { position:relative; width:max-content; margin:0 auto; padding-top:4px; }
+  .pv-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+  .pv-head h3 { margin:0; }
+  button.btn.on { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }
+  .pv-hint { display:none; font-size:12px; color:var(--muted); margin:-4px 0 10px; }
+  .pv-hint.show { display:block; }
+  .scale-row { display:flex; align-items:center; gap:10px; font-size:13px; color:var(--muted); margin-top:14px; }
+  .scale-row input[type=range] { flex:1; accent-color:var(--accent); }
+  .scale-row b { color:var(--text); font-weight:600; min-width:44px; text-align:right; }
+  #ftb { position:absolute; z-index:5; display:none; align-items:center; gap:2px; padding:4px; border-radius:10px; background:#111827; border:1px solid #374151; box-shadow:0 6px 20px rgba(0,0,0,.45); white-space:nowrap; }
+  #ftb.show { display:flex; }
+  #ftb button { border:0; background:transparent; color:#e5e7eb; font:600 13px Poppins, system-ui, sans-serif; padding:5px 9px; border-radius:7px; cursor:pointer; }
+  #ftb button:hover { background:#1f2937; }
+  #ftb button.on { background:#3557e0; color:#fff; }
+  #ftb .val { color:#e5e7eb; font-size:12px; padding:0 4px; min-width:52px; text-align:center; }
+  #ftb .nm { color:#9ca3af; font-size:11px; padding:0 8px 0 6px; border-right:1px solid #374151; margin-right:2px; max-width:150px; overflow:hidden; text-overflow:ellipsis; }
   #canvas { position:relative; background:#fff center/100% 100% no-repeat; border-radius:4px; box-shadow:0 6px 24px rgba(0,0,0,.4); overflow:hidden; user-select:none; margin:0 auto; }
   .fbox { position:absolute; white-space:nowrap; overflow:hidden; line-height:1; display:flex; align-items:center; }
   #canvas.editing .fbox { border:1px dashed #3557e0; background:rgba(53,87,224,.07); cursor:move; }
@@ -132,7 +148,11 @@
   .fbox .tag { position:absolute; top:-1px; left:-1px; font:10px system-ui; background:#3557e0; color:#fff; padding:1px 4px; pointer-events:none; }
   .fbox .rs { display:none; }
   #canvas.editing .fbox .rs { display:block; position:absolute; right:0; top:0; bottom:0; width:7px; cursor:ew-resize; background:rgba(53,87,224,.35); }
-  #canvas:not(.editing) .tag { display:none; }
+  .fbox .sz { display:none; }
+  #canvas.editing .fbox.sel .sz { display:block; position:absolute; right:-1px; bottom:-1px; width:11px; height:11px; cursor:nwse-resize; background:#3557e0; border:2px solid #fff; border-radius:3px; }
+  #canvas.editing .fbox.sel { overflow:visible; }
+  #canvas.editing .fbox.sel > .val { overflow:hidden; }
+  .fbox .tag { display:none; }
   .pv-nav { display:flex; align-items:center; justify-content:center; gap:10px; margin-top:12px; font-size:13px; color:var(--muted); }
   .pv-nav button { width:32px; height:32px; border-radius:50%; border:1px solid var(--line); background:var(--surface2); color:var(--text); cursor:pointer; }
 
@@ -249,8 +269,12 @@
     <p class="lead">These are printed on every receipt. The preview updates as you type.</p>
     <div class="grid2">
       <div class="card">
-        <h3>Preview</h3>
-        <div class="pv-wrap"><div id="canvas"></div></div>
+        <div class="pv-head"><h3>Preview</h3><button class="btn" id="editBtn" type="button">✎ Adjust text</button></div>
+        <p class="pv-hint" id="pvHint">Click any text to select it, then use <b>A− / A+</b> or drag the <b>corner square</b> to resize it. Drag the text to move it, or its <b>right edge</b> to make it wider.</p>
+        <div class="pv-wrap"><div class="pv-stage"><div id="canvas"></div>
+          <div id="ftb"><span class="nm" id="ftbName"></span><button id="ftbDec" type="button" title="Smaller text">A−</button><span class="val" id="ftbSize"></span><button id="ftbInc" type="button" title="Bigger text">A+</button><button id="ftbBold" type="button" title="Bold">B</button><button id="ftbReset" type="button" title="Back to the original size and place">↺</button><button id="ftbDone" type="button" title="Done">✓</button></div>
+        </div></div>
+        <div class="scale-row"><span>All text</span><button class="btn" id="scaleDec" type="button" style="padding:4px 10px">−</button><input type="range" id="qScale" min="70" max="140" step="5" value="100"><button class="btn" id="scaleInc" type="button" style="padding:4px 10px">+</button><b id="qScaleVal">100%</b></div>
         <div class="pv-nav"><button id="pvPrev" type="button" title="Previous student">‹</button><span id="pvLabel">Sample</span><button id="pvNext" type="button" title="Next student">›</button></div>
       </div>
       <div class="card">
@@ -454,7 +478,7 @@ function syncFieldsToHeaders() {
 function layoutObj() {
   return { fields: state.fields, rnYear: rnYear.value, rnSem: rnSem.value, rnStart: rnStart.value, rnDigits: rnDigits.value,
            amtPrefix: amtPrefix.value, amtDecimals: amtDecimals.checked,
-           fontFamily: fontFamily.value, fontColor: fontColor.value, orient: orient.value,
+           fontFamily: fontFamily.value, fontColor: fontColor.value, orient: orient.value, scale: qScale.value,
            offX: offX.value, offY: offY.value, gap: gap.value, showBg: showBg.checked, cutLines: cutLines.checked };
 }
 function applyLayout(o) {
@@ -465,7 +489,7 @@ function applyLayout(o) {
   }
   const set = (el, v) => { if (v !== undefined) { if (el.type === 'checkbox') el.checked = v; else el.value = v; } };
   set(amtPrefix, o.amtPrefix); set(amtDecimals, o.amtDecimals); set(fontFamily, o.fontFamily); set(fontColor, o.fontColor);
-  set(rnYear, o.rnYear); set(rnSem, o.rnSem); set(rnStart, o.rnStart); set(rnDigits, o.rnDigits);
+  set(rnYear, o.rnYear); set(rnSem, o.rnSem); set(rnStart, o.rnStart); set(rnDigits, o.rnDigits); set(qScale, o.scale); qScaleVal.textContent = qScale.value + '%';
   set(orient, o.orient); set(offX, o.offX); set(offY, o.offY); set(gap, o.gap); set(showBg, o.showBg); set(cutLines, o.cutLines);
 }
 function persist() { try { localStorage.setItem('receiptLayout5', JSON.stringify(layoutObj())); } catch(e){} }
@@ -840,13 +864,17 @@ addField.addEventListener('click', () => {
 });
 
 /* ---------- editor canvas ---------- */
+function textScale() { return (parseFloat(qScale.value) || 100) / 100; }
+function effSize(f) { return Math.round(f.size * textScale() * 10) / 10; }
+// keep the bottom of the text on its line when the size changes
+function topOf(f) { return f.y + (f.size - effSize(f)) * PT_TO_MM * 1.25; }
 function styleText(el, f, mmScale, unit) {
   el.style.fontFamily = fontFamily.value;
   el.style.color = fontColor.value;
   el.style.fontWeight = f.bold ? '700' : '400';
   el.style.justifyContent = f.align === 'center' ? 'center' : f.align === 'right' ? 'flex-end' : 'flex-start';
-  el.style.fontSize = (f.size * PT_TO_MM * mmScale) + unit;
-  el.style.height = (f.size * PT_TO_MM * 1.25 * mmScale) + unit;
+  el.style.fontSize = (effSize(f) * PT_TO_MM * mmScale) + unit;
+  el.style.height = (effSize(f) * PT_TO_MM * 1.25 * mmScale) + unit;
 }
 function fitText(span, box) {
   let fs = parseFloat(span.style.fontSize), unit = span.style.fontSize.replace(/[0-9.]/g, ''), guard = 40;
@@ -865,7 +893,7 @@ function renderEditor() {
     const b = document.createElement('div');
     b.className = 'fbox' + (state.selected === f.id ? ' sel' : '');
     b.dataset.id = f.id; b.title = fieldLabel(f);
-    b.style.left = f.x * PX_PER_MM + 'px'; b.style.top = f.y * PX_PER_MM + 'px'; b.style.width = f.w * PX_PER_MM + 'px';
+    b.style.left = f.x * PX_PER_MM + 'px'; b.style.top = topOf(f) * PX_PER_MM + 'px'; b.style.width = f.w * PX_PER_MM + 'px';
     styleText(b, f, PX_PER_MM, 'px');
     const span = document.createElement('span'); span.className = 'val';
     let txt;
@@ -877,17 +905,58 @@ function renderEditor() {
     b.appendChild(span);
     if (state.selected === f.id) { const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = fieldLabel(f); b.appendChild(tag); }
     const rs = document.createElement('div'); rs.className = 'rs'; b.appendChild(rs);
+    const sz = document.createElement('div'); sz.className = 'sz'; sz.title = 'Drag to resize the text'; b.appendChild(sz);
     c.appendChild(b);
     fitText(span, b);
   }
+  placeToolbar();
 }
+function placeToolbar() {
+  const f = state.selected && byId(state.selected);
+  const on = !!(f && f.enabled && canvas.classList.contains('editing'));
+  ftb.classList.toggle('show', on); if (!on) return;
+  ftbName.textContent = fieldLabel(f);
+  ftbSize.textContent = effSize(f) + ' pt';
+  ftbBold.classList.toggle('on', !!f.bold);
+  const top = topOf(f) * PX_PER_MM, left = f.x * PX_PER_MM;
+  ftb.style.left = Math.max(0, Math.min(left, RW * PX_PER_MM - ftb.offsetWidth)) + 'px';
+  ftb.style.top = (top > 44 ? top - 40 : top + effSize(f) * PT_TO_MM * 1.25 * PX_PER_MM + 8) + 'px';
+}
+function setSize(f, size) {
+  // change the size but keep the text sitting on its line
+  const ns = clamp(Math.round(size * 2) / 2, 4, 30);
+  f.y = round1(f.y + (f.size - ns) * PT_TO_MM * 1.25); f.size = ns;
+}
+function bumpSize(d) { const f = state.selected && byId(state.selected); if (!f) return; setSize(f, f.size + d); renderFieldTable(); renderEditor(); persist(); }
+ftbDec.addEventListener('click', () => bumpSize(-0.5));
+ftbInc.addEventListener('click', () => bumpSize(0.5));
+ftbBold.addEventListener('click', () => { const f = byId(state.selected); if (!f) return; f.bold = !f.bold; renderFieldTable(); renderEditor(); persist(); });
+ftbReset.addEventListener('click', () => {
+  const f = byId(state.selected); if (!f) return;
+  const d = f.slot && slotDef(f);
+  if (d) Object.assign(f, { x:d.x, y:d.y, w:d.w, size:d.size, bold:!!d.bold, align:d.align || 'left' });
+  renderFieldTable(); renderEditor(); persist();
+});
+ftbDone.addEventListener('click', () => { state.selected = null; renderFieldTable(); renderEditor(); });
+function setEditing(on) {
+  canvas.classList.toggle('editing', on); editBtn.classList.toggle('on', on);
+  editBtn.textContent = on ? '✓ Done adjusting' : '✎ Adjust text';
+  pvHint.classList.toggle('show', on);
+  if (!on) state.selected = null;
+  renderFieldTable(); renderEditor();
+}
+editBtn.addEventListener('click', () => setEditing(!canvas.classList.contains('editing')));
+function setScale(v) { qScale.value = clamp(v, 70, 140); qScaleVal.textContent = qScale.value + '%'; renderEditor(); persist(); }
+qScale.addEventListener('input', () => setScale(+qScale.value));
+scaleDec.addEventListener('click', () => setScale(+qScale.value - 5));
+scaleInc.addEventListener('click', () => setScale(+qScale.value + 5));
 let drag = null;
 canvas.addEventListener('pointerdown', e => {
   if (!canvas.classList.contains('editing')) return;
   const b = e.target.closest('.fbox'); if (!b) { state.selected = null; renderFieldTable(); renderEditor(); return; }
   const f = byId(b.dataset.id);
   state.selected = f.id;
-  drag = { id: f.id, mode: e.target.classList.contains('rs') ? 'resize' : 'move', sx: e.clientX, sy: e.clientY, ox: f.x, oy: f.y, ow: f.w };
+  drag = { id: f.id, mode: e.target.classList.contains('sz') ? 'size' : e.target.classList.contains('rs') ? 'resize' : 'move', sx: e.clientX, sy: e.clientY, ox: f.x, oy: f.y, ow: f.w, os: f.size };
   canvas.setPointerCapture(e.pointerId);
   renderFieldTable(); renderEditor();
   e.preventDefault();
@@ -895,15 +964,25 @@ canvas.addEventListener('pointerdown', e => {
 canvas.addEventListener('pointermove', e => {
   if (!drag) return;
   const f = byId(drag.id), dx = (e.clientX - drag.sx) / PX_PER_MM, dy = (e.clientY - drag.sy) / PX_PER_MM;
+  if (drag.mode === 'size') {
+    // dragging the corner down/right makes the text bigger
+    const h0 = drag.os * PT_TO_MM * 1.25, grow = (dy + dx * 0.25) / (h0 * 4);
+    f.y = drag.oy; f.size = drag.os; setSize(f, drag.os * (1 + grow));
+    renderEditor(); return;
+  }
   if (drag.mode === 'move') { f.x = clamp(round1(drag.ox + dx), -5, RW - 2); f.y = clamp(round1(drag.oy + dy), -5, RH - 2); }
   else f.w = clamp(round1(drag.ow + dx), 3, RW);
   const b = canvas.querySelector(`.fbox[data-id="${drag.id}"]`);
-  b.style.left = f.x * PX_PER_MM + 'px'; b.style.top = f.y * PX_PER_MM + 'px'; b.style.width = f.w * PX_PER_MM + 'px';
+  b.style.left = f.x * PX_PER_MM + 'px'; b.style.top = topOf(f) * PX_PER_MM + 'px'; b.style.width = f.w * PX_PER_MM + 'px';
+  placeToolbar();
 });
-canvas.addEventListener('pointerup', () => { if (drag) { drag = null; renderEditor(); persist(); } });
+canvas.addEventListener('pointerup', () => { if (drag) { drag = null; renderFieldTable(); renderEditor(); persist(); } });
 document.addEventListener('keydown', e => {
   if (!state.selected || !canvas.classList.contains('editing') || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
   const step = e.shiftKey ? 2 : 0.5, f = byId(state.selected); if (!f) return;
+  if (e.key === '+' || e.key === '=') { e.preventDefault(); bumpSize(0.5); return; }
+  if (e.key === '-' || e.key === '_') { e.preventDefault(); bumpSize(-0.5); return; }
+  if (e.key === 'Escape') { state.selected = null; renderFieldTable(); renderEditor(); return; }
   const m = { ArrowLeft:[-step,0], ArrowRight:[step,0], ArrowUp:[0,-step], ArrowDown:[0,step] }[e.key];
   if (!m) return;
   e.preventDefault(); f.x = round1(f.x + m[0]); f.y = round1(f.y + m[1]); renderEditor(); persist();
@@ -912,7 +991,7 @@ document.addEventListener('keydown', e => {
 [orient, offX, offY, gap, showBg, cutLines].forEach(el => el.addEventListener('input', () => { persist(); if (state.step === 3) generate(); renderPreview(); }));
 pvPrev.addEventListener('click', () => { state.pv = Math.max(0, state.pv - 1); renderEditor(); });
 pvNext.addEventListener('click', () => { state.pv = Math.min(state.rows.length - 1, state.pv + 1); renderEditor(); });
-advLayout.addEventListener('toggle', () => { canvas.classList.toggle('editing', advLayout.open); if (!advLayout.open) state.selected = null; renderFieldTable(); renderEditor(); });
+advLayout.addEventListener('toggle', () => setEditing(advLayout.open));
 
 /* ---------- quick details form (step 2) ---------- */
 const slotField = k => state.fields.find(f => f.slot === k);
@@ -989,7 +1068,7 @@ function generate() {
       if (showBg.checked && state.tplData) rc.style.backgroundImage = `url(${state.tplData})`;
       for (const f of shown) {
         const el = document.createElement('div'); el.className = 'rf';
-        el.style.left = f.x + 'mm'; el.style.top = f.y + 'mm'; el.style.width = f.w + 'mm';
+        el.style.left = f.x + 'mm'; el.style.top = topOf(f) + 'mm'; el.style.width = f.w + 'mm';
         styleText(el, f, 1, 'mm');
         const span = document.createElement('span'); span.textContent = valueFor(f, row, p * per + i); span.style.fontSize = el.style.fontSize;
         el.appendChild(span); rc.appendChild(el);
@@ -1041,7 +1120,8 @@ clearAll.addEventListener('click', () => {
   dataFile.value = ''; tplFile.value = ''; sheetPick.innerHTML = ''; sheetPickWrap.style.display = 'none';
   tplStatus.textContent = 'Using the built-in I-CONNECT Official Receipt'; tplStatus.className = 'status ok';
   rnYear.value = new Date().getFullYear(); rnSem.value = '1'; rnStart.value = 1; rnDigits.value = 4;
-  fontFamily.selectedIndex = 0; fontColor.value = '#0f1853'; amtPrefix.value = '₱'; amtDecimals.checked = true;
+  fontFamily.selectedIndex = 0; fontColor.value = '#0f1853'; amtPrefix.value = '₱'; amtDecimals.checked = true; qScale.value = 100; qScaleVal.textContent = '100%';
+  setEditing(false);
   orient.value = 'landscape'; offX.value = 0; offY.value = 0; gap.value = 0; showBg.checked = true; cutLines.checked = false;
   advLayout.open = false;
   renderPreview(); renderFieldTable(); renderQuick(); renderEditor(); updateRnExample(); generate(); goStep(1);
@@ -1056,6 +1136,7 @@ function goStep(n) {
     t.classList.toggle('active', k === n);
     t.classList.toggle('done', k < n && state.rows.length > 0);
   });
+  if (n !== 2 && canvas.classList.contains('editing') && !advLayout.open) setEditing(false);
   if (n === 3) generate();
   if (n === 2) renderEditor();
   updateNav();
