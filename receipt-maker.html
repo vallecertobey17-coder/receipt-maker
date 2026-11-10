@@ -73,6 +73,7 @@
   .drop b { font-size:16px; font-weight:600; }
   .drop span { color:var(--muted); font-size:13px; }
   .drop input { display:none; }
+  .manual-start { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:10px; margin-top:12px; text-align:center; }
   .types { display:flex; gap:6px; flex-wrap:wrap; justify-content:center; margin-top:4px; }
   .types i { font-style:normal; font-size:11px; padding:2px 8px; border-radius:6px; background:var(--surface); border:1px solid var(--line); color:var(--muted); }
 
@@ -283,7 +284,7 @@
   <!-- STEP 1 -->
   <section class="panel active" id="p1">
     <h2>Who are the receipts for?</h2>
-    <p class="lead">Attach the treasurer's lists. You can add several files at once, for example one per section.</p>
+    <p class="lead">Attach the treasurer's lists (you can add several files at once, for example one per section), or type the names yourself.</p>
     <div class="card">
       <label class="drop" id="dropZone">
         <input type="file" id="dataFile" accept=".docx,.pdf,.xlsx,.xls,.csv,.tsv,.ods" multiple>
@@ -292,6 +293,10 @@
         <span>Word, PDF or Excel</span>
         <div class="types"><i>.docx</i><i>.pdf</i><i>.xlsx</i><i>.csv</i></div>
       </label>
+      <div class="manual-start">
+        <span class="small">No file? For a few students or receipts that were left out:</span>
+        <button class="btn primary" id="manualBtn" type="button">✍ Type the names myself</button>
+      </div>
       <div class="help">
         <div><b>Word or PDF:</b> needs a <b>COURSE, YEAR, &amp; SECTION:</b> box and a table with a <b>NAME</b> column. Signature columns and blank rows are skipped. From Google Docs, use File → Download → .docx or .pdf.</div>
         <div><b>Excel:</b> make the column titles <b>bold</b> (e.g. <b>Name</b>, <b>Course, Year &amp; Section</b>). Rows above the titles are ignored.<br><button class="link" id="sampleBtn" type="button">Try it with sample names</button></div>
@@ -893,6 +898,12 @@ function loadGrid(grid, bold) {
   dataStatus.className = how.startsWith('no bold') ? 'status err' : 'status ok';
   renderPreview(); renderFieldTable(); renderQuick(); renderEditor(); updateRnExample(); updateNav(); persist();
 }
+manualBtn.addEventListener('click', () => {
+  if (!state.headers.length) { state.headers = ['Name', SEC_HDR]; state.rows = []; state.secMode = {}; syncFieldsToHeaders(); renderFieldTable(); }
+  showResult(); renderPreview(); updateRnExample(); updateNav();
+  if (!state.rows.length) { dataStatus.textContent = 'Type each student below: name, section and (if needed) their OR No., then click + Add student.'; dataStatus.className = 'status'; }
+  resultCard.scrollIntoView({ behavior: 'smooth', block: 'start' }); setTimeout(() => addName.focus(), 300);
+});
 sampleBtn.addEventListener('click', () => {
   state.secStats = {};
   const g = [
@@ -1581,7 +1592,7 @@ function updateNav() {
   navNext.style.display = n < 3 ? '' : 'none';
   navNext.textContent = n === 1 ? 'Next: Details →' : 'Next: Print →';
   navNext.disabled = !has;
-  navHint.textContent = has ? `${state.rows.length} student${state.rows.length === 1 ? '' : 's'} ready` : 'Attach the student lists to begin';
+  navHint.textContent = has ? `${state.rows.length} student${state.rows.length === 1 ? '' : 's'} ready` : 'Attach the student lists, or type the names, to begin';
 }
 document.querySelectorAll('.step-tab').forEach(t => t.addEventListener('click', () => goStep(+t.dataset.go)));
 navBack.addEventListener('click', () => goStep(Math.max(1, state.step - 1)));
