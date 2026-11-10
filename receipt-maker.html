@@ -125,7 +125,11 @@
   .g-count { font-size:13px; padding:2px 10px; border-radius:999px; background:var(--surface); border:1px solid var(--line); }
   .g-meta { margin-left:auto; font-size:12px; color:var(--muted); }
   .g-wrap { border:0; border-radius:0; margin:0; max-height:none; }
-  .add-row { display:grid; grid-template-columns:2fr 1fr auto; gap:8px; margin-top:12px; }
+  .add-row { display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:8px; margin-top:12px; }
+  table.list td.or input.orin { width:118px; padding:3px 6px; font-size:12px; font-variant-numeric:tabular-nums; }
+  table.list td.or input.orin.own { border-color:var(--accent, #2563eb); background:color-mix(in srgb, var(--accent, #2563eb) 10%, transparent); color:var(--text); font-weight:600; }
+  table.list td.or input.orin.dup { border-color:var(--err); background:color-mix(in srgb, var(--err) 14%, transparent); }
+  .dupwarn { color:var(--err); font-weight:600; }
   @media (max-width: 700px) { .add-row { grid-template-columns:1fr; } }
   .x { border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:14px; padding:2px 6px; border-radius:6px; }
   .x:hover { color:var(--err); background:color-mix(in srgb, var(--err) 12%, transparent); }
@@ -315,10 +319,11 @@
       <form class="add-row" id="addForm" autocomplete="off">
         <input type="text" id="addName" placeholder="Add a missing student: SURNAME, FIRST M.">
         <input type="text" id="addSec" list="secList" placeholder="Section, e.g. BSIT 2-2">
+        <input type="text" id="addOr" inputmode="numeric" placeholder="OR No. (optional), e.g. 0137" title="Type the number from the receipt that was left out. Leave blank to number it automatically.">
         <datalist id="secList"></datalist>
         <button class="btn" type="submit">+ Add student</button>
       </form>
-      <p class="small" style="margin:8px 0 0">Students get OR numbers in this order. Change <b>Date received</b> for anyone who paid on a different day (highlighted dates differ from the default in step 2). Click ✕ to remove a student who hasn't paid.</p>
+      <p class="small" style="margin:8px 0 0">Students get OR numbers in this order. Change <b>Date received</b> for anyone who paid on a different day (highlighted dates differ from the default in step 2). Click ✕ to remove a student who hasn't paid.<br><b>Own OR No.:</b> type a number in the OR No. box of any student (or when adding one) to give them that exact number, e.g. to reprint a receipt that was left out. Their number is kept and the other students' numbers do not move. Clear the box to go back to automatic numbering.</p>
     </div>
   </section>
 
@@ -515,6 +520,22 @@ function fieldLabel(f) {
 }
 function rnPad(n) { return String(n).padStart(Math.max(1, parseInt(rnDigits.value) || 4), '0'); }
 function receiptNo(idx) { return `${rnYear.value.trim()}-${rnSem.value.trim()}-${rnPad((parseInt(rnStart.value) || 1) + idx)}`; }
+// A student can have their own OR No. (typed by hand). "137" becomes YEAR-SEM-0137; a full "2026-1-0137" is used as written.
+function fmtOwnOr(v) { v = String(v || '').trim(); return /^\d+$/.test(v) ? `${rnYear.value.trim()}-${rnSem.value.trim()}-${rnPad(parseInt(v, 10))}` : v; }
+function autoCount() { return state.rows.filter(r => !r.__or).length; }
+// OR No. of the student at row i: their own number, or the next automatic number (students with their own number are skipped)
+function orOf(i) {
+  const r = state.rows[i]; if (r && r.__or) return fmtOwnOr(r.__or);
+  let k = 0; for (let j = 0; j < i && j < state.rows.length; j++) if (!state.rows[j].__or) k++;
+  return receiptNo(k);
+}
+function orNums() { return state.rows.map((r, i) => orOf(i)); }
+function dupOrs() { const seen = new Map(), d = new Set(); orNums().forEach(n => { if (seen.has(n)) d.add(n); seen.set(n, 1); }); return d; }
+function orRange() {
+  const ns = orNums(); if (!ns.length) return '–';
+  const own = state.rows.filter(r => r.__or).length;
+  return (ns.length > 1 ? `${ns[0]} – ${ns[ns.length - 1].split('-').pop()}` : ns[0]) + (own ? ` (${own} with own no.)` : '');
+}
 
 // Pick the source of a template line from the column titles (unless the user chose one).
 function autoSource(f) {
@@ -993,6 +1014,7 @@ function renderPreview() {
   state.rows.forEach((r, i) => { const k = secCol ? (r[secCol] || '(no section)') : 'Students'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); });
   const cols = h.filter(x => x !== secCol);
   const st = state.secStats || {};
+  const dups = orOn ? dupOrs() : new Set();
   dataPreview.innerHTML = !n ? '' : (groups.size > 1 ? `<div class="grp-tools"><button class="link" type="button" data-grp="open">Expand all</button><button class="link" type="button" data-grp="close">Collapse all</button></div>` : '') +
     [...groups].map(([k, idx]) => {
       const e = state.expected[k], files = st[k] ? [...st[k].files].join(', ') : '';
@@ -1000,12 +1022,13 @@ function renderPreview() {
       return `<details class="secgroup" open data-sec="${esc(k)}"><summary>
         <span class="g-name">${esc(k)}</span><span class="g-count">${idx.length} student${idx.length === 1 ? '' : 's'}</span>
         ${e !== undefined && e !== '' ? `<span class="small">expected ${esc(e)}</span>` : ''}<span class="grp-res" data-sec="${esc(k)}">${checkResult(idx.length, e)}</span>
-        <span class="g-meta">${orOn ? `OR ${esc(receiptNo(first))} – ${esc(receiptNo(last).split('-').pop())}` : ''}${files ? ` · ${esc(files)}` : ''}</span></summary>
+        <span class="g-meta">${orOn ? `OR ${esc(orOf(first))} – ${esc(orOf(last).split('-').pop())}` : ''}${files ? ` · ${esc(files)}` : ''}</span></summary>
         <div class="table-wrap g-wrap"><table class="list"><thead><tr><th>#</th>${orOn ? '<th>OR No.</th>' : ''}${cols.map(x => `<th>${esc(x)}</th>`).join('')}${dateF ? '<th>Date received</th>' : ''}${gF ? '<th>Mode</th>' : ''}<th></th></tr></thead><tbody>` +
         idx.map((i, j) => { const r = state.rows[i];
-          return `<tr><td class="num">${j + 1}</td>${orOn ? `<td class="or">${esc(receiptNo(i))}</td>` : ''}${cols.map(x => `<td>${esc(r[x])}</td>`).join('')}${dateCell(r, i)}${gF ? `<td class="num">${valueFor(gF, r, i) === '✓' ? 'GCash' : 'Cash'}</td>` : ''}<td><button class="x" data-rm="${i}" title="Remove">✕</button></td></tr>`; }).join('') +
+          return `<tr><td class="num">${j + 1}</td>${orOn ? `<td class="or"><input type="text" class="orin${r.__or ? ' own' : ''}${dups.has(orOf(i)) ? ' dup' : ''}" data-i="${i}" value="${esc(orOf(i))}" title="${r.__or ? 'Own OR No. (typed by hand). Clear it to go back to automatic.' : 'Automatic OR No. Type a number to give this student their own.'}"></td>` : ''}${cols.map(x => `<td>${esc(r[x])}</td>`).join('')}${dateCell(r, i)}${gF ? `<td class="num">${valueFor(gF, r, i) === '✓' ? 'GCash' : 'Cash'}</td>` : ''}<td><button class="x" data-rm="${i}" title="Remove">✕</button></td></tr>`; }).join('') +
         '</tbody></table></div></details>';
     }).join('');
+  if (dups.size) dataPreview.insertAdjacentHTML('afterbegin', `<p class="dupwarn">⚠ Same OR No. used twice: ${[...dups].map(esc).join(', ')}. Change one of them (highlighted in red).</p>`);
   // keep sections the user collapsed closed after a refresh of the list
   for (const d of dataPreview.querySelectorAll('details.secgroup')) if ((state.closedSecs || new Set()).has(d.dataset.sec)) d.open = false;
 }
@@ -1017,15 +1040,26 @@ addForm.addEventListener('submit', e => {
   if (!state.headers.length) { state.headers = ['Name', SEC_HDR]; state.rows = []; state.secMode = {}; syncFieldsToHeaders(); renderFieldTable(); }
   const nameCol = state.headers.find(h => /name/i.test(h)) || state.headers[0], col = secColumn();
   const row = {}; state.headers.forEach(h => row[h] = ''); row[nameCol] = name; if (col) row[col] = sec;
+  const own = addOr.value.trim(); if (own) row.__or = own;
   // put the new student after the last one from the same section
   let at = state.rows.length; if (col && sec) { const last = state.rows.map(r => r[col]).lastIndexOf(sec); if (last >= 0) at = last + 1; }
   state.rows.splice(at, 0, row);
-  addName.value = ''; addName.focus(); showResult();
-  dataStatus.textContent = `Added ${name}${sec ? ' to ' + sec : ''}.`; dataStatus.className = 'status ok';
+  addName.value = ''; addOr.value = ''; addName.focus(); showResult();
+  const dupMsg = own && dupOrs().has(fmtOwnOr(own)) ? ` ⚠ OR No. ${fmtOwnOr(own)} is already used by another student.` : '';
+  dataStatus.textContent = `Added ${name}${sec ? ' to ' + sec : ''}${own ? ' with OR No. ' + fmtOwnOr(own) : ''}.${dupMsg}`; dataStatus.className = dupMsg ? 'status err' : 'status ok';
   renderPreview(); renderQuick(); renderEditor(); updateRnExample(); updateNav();
 });
 dataPreview.addEventListener('change', e => {
-  const el = e.target; if (!el.classList || !el.classList.contains('rowdate')) return;
+  const el = e.target;
+  if (el.classList && el.classList.contains('orin')) {
+    const i = +el.dataset.i, r = state.rows[i]; if (!r) return;
+    const v = el.value.trim();
+    delete r.__or; const auto = orOf(i);
+    if (v && fmtOwnOr(v) !== auto) r.__or = v;
+    renderPreview(); renderQuick(); renderEditor(); updateRnExample(); if (state.step === 3) generate();
+    return;
+  }
+  if (!el.classList || !el.classList.contains('rowdate')) return;
   const r = state.rows[+el.dataset.i]; if (!r) return;
   const v = isoToStr(el.value), def = defaultDate();
   if (!el.value || (def && v === def)) delete r.__date; else r.__date = v;
@@ -1082,7 +1116,7 @@ function valueFor(f, row, idx = 0) {
   }
   if (f.slot === 'date' && row && row.__date) return row.__date;
   if (f.slot === 'date' && row) { const sd = secModeOf(row); if (sd && sd.date) return sd.date; }
-  if (f.src === 'auto') return receiptNo(idx);
+  if (f.src === 'auto') return row ? orOf(idx) : receiptNo(idx);
   let v = f.src === 'fixed' ? f.fixed : (row ? (row[f.col] ?? '') : '');
   if (f.format === 'money') return fmtMoney(v);
   if (f.format === 'number') { const n = parseAmount(v); return n === null ? String(v) : n.toLocaleString('en-US', amtDecimals.checked ? { minimumFractionDigits:2, maximumFractionDigits:2 } : { maximumFractionDigits:2 }); }
@@ -1407,7 +1441,7 @@ function generate() {
   const auto = state.fields.find(f => f.src === 'auto' && f.enabled);
   genStatus.textContent = 'Check the sheets below, then print.';
   sumCount.textContent = state.rows.length; sumSheets.textContent = total;
-  sumRange.textContent = auto ? (state.rows.length > 1 ? `${receiptNo(0)} – ${receiptNo(state.rows.length - 1).split('-').pop()}` : receiptNo(0)) : '–';
+  sumRange.textContent = auto ? orRange() : '–';
   markUsed.disabled = false; exportList.disabled = false;
 }
 printBtn.addEventListener('click', () => { window.print(); afterCard.classList.add('show'); usedStatus.textContent = ''; });
@@ -1457,7 +1491,7 @@ async function savePdf() {
       pdf.addImage(cv.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, G.PW, G.PH, undefined, 'FAST');
     }
     const auto = state.fields.find(f => f.src === 'auto' && f.enabled);
-    const name = auto ? `receipts-${receiptNo(0)}-to-${receiptNo(state.rows.length - 1).split('-').pop()}.pdf` : 'receipts.pdf';
+    const name = auto ? `receipts-${orOf(0)}-to-${orOf(state.rows.length - 1).split('-').pop()}.pdf` : 'receipts.pdf';
     pdf.save(name);
     pdfStatus.innerHTML = `Saved <b>${esc(name)}</b> to your Downloads. When you print it, choose scale <b>100% / Actual size</b>.`; pdfStatus.className = 'tip';
     afterCard.classList.add('show'); usedStatus.textContent = '';
@@ -1467,7 +1501,7 @@ async function savePdf() {
 }
 pdfBtn.addEventListener('click', savePdf);
 markUsed.addEventListener('click', () => {
-  const next = (parseInt(rnStart.value) || 1) + state.rows.length;
+  const next = (parseInt(rnStart.value) || 1) + autoCount();   // students with their own OR No. don't use up automatic numbers
   rnStart.value = next; persist();
   state.rows = []; state.headers = []; state.book = null; state.pv = 0; state.secMode = {};
   syncFieldsToHeaders(); sheets.innerHTML = ''; afterCard.classList.remove('show');
@@ -1480,7 +1514,7 @@ exportList.addEventListener('click', () => {
   const auto = state.fields.find(f => f.src === 'auto' && f.enabled);
   const dateF = state.fields.find(f => f.slot === 'date' && f.enabled);
   const data = state.rows.map((r, i) => {
-    const o = auto ? { 'OR No.': receiptNo(i) } : {};
+    const o = auto ? { 'OR No.': orOf(i) } : {};
     for (const h of state.headers) o[h] = r[h];
     if (dateF) o['Date received'] = valueFor(dateF, r, i);
     const cashF = state.fields.find(f => f.slot === 'gcash'), refF = state.fields.find(f => f.slot === 'ref');
@@ -1495,9 +1529,9 @@ function syncOrBar() {
   if (document.activeElement !== s1Year) s1Year.value = rnYear.value;
   s1Sem.value = rnSem.value;
   if (document.activeElement !== s1Start) s1Start.value = rnStart.value;
-  const n = state.rows.length;
-  s1First.textContent = receiptNo(0);
-  s1Range.textContent = n ? `These ${n} receipts will be ${receiptNo(0)} to ${receiptNo(n - 1)}.` : 'Change "Start at no." to continue from a paper receipt book or to start over at 1.';
+  const n = state.rows.length, na = autoCount(), own = n - na;
+  s1First.textContent = n ? orOf(0) : receiptNo(0);
+  s1Range.textContent = n ? (na ? `These ${na} receipts will be ${receiptNo(0)} to ${receiptNo(na - 1)}` : 'All receipts use their own OR No.') + (own ? ` (+ ${own} with their own OR No.)` : '') + '.' : 'Change "Start at no." to continue from a paper receipt book or to start over at 1.';
 }
 [[s1Year, rnYear], [s1Sem, rnSem], [s1Start, rnStart]].forEach(([a, b]) => a.addEventListener('input', () => {
   if (a === s1Start || a === s1Year) a.value = a.value.replace(/\D/g, '');
@@ -1505,7 +1539,7 @@ function syncOrBar() {
   b.value = a.value; b.dispatchEvent(new Event('input'));
 }));
 s1Start.addEventListener('blur', () => { if (!s1Start.value) s1Start.value = rnStart.value; });
-function updateRnExample() { syncOrBar(); const n = state.rows.length; rnExample.textContent = n > 1 ? `${receiptNo(0)} to ${receiptNo(n - 1)}` : n === 1 ? receiptNo(0) : `${receiptNo(0)}, ${receiptNo(1)}, …`; }
+function updateRnExample() { syncOrBar(); const n = state.rows.length; rnExample.textContent = n ? orRange() : `${receiptNo(0)}, ${receiptNo(1)}, …`; }
 [rnYear, rnSem, rnStart, rnDigits].forEach(el => el.addEventListener('input', () => {
   updateRnExample(); renderEditor(); renderPreview(); persist();
   if (state.step === 3) generate();
